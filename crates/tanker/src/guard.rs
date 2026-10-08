@@ -146,7 +146,20 @@ pub enum State {
     Asleep { delay: f32, timer: f32, wake: f32 },
     /// Saw a comrade down: goes over and wakes him (raising caution).
     Rouse { sleeper: Entity, at: Vec3 },
+    /// Held up at gunpoint: hands raised (motion 8). `loose` counts frames
+    /// without a gun on him; `shake` counts frames with Snake aiming from
+    /// the front (dog tags at [`TAG_FRAMES`]).
+    HeldUp { loose: f32, shake: f32 },
 }
+
+/// gbs.mar: hands raised.
+const HANDS_UP: usize = 8;
+/// A held-up guard turns on Snake after this long without a gun on him.
+const HOLDUP_LOOSE: f32 = 120.0;
+/// Aiming at a held-up guard from the front this long gets his dog tags.
+const TAG_FRAMES: f32 = 120.0;
+/// Hold-ups work within this range (mm).
+const HOLDUP_RANGE: f32 = 2500.0;
 
 mod sleep {
     /// gbs.mar: falling prone, lying asleep.
@@ -180,6 +193,8 @@ pub struct Guard {
     /// distance at which the guard hears Snake running; not yet confirmed
     /// in the code.
     pub hearing: f32,
+    /// Has given up his dog tags.
+    pub tagged: bool,
 }
 
 /// Shooting (`FUN_00228710`/`FUN_00228F80`): aim for 21 frames, then a
@@ -228,6 +243,7 @@ pub fn from_spawn(s: &Spawn, default_vision: f32) -> Option<(Guard, Vec3)> {
         repath: 0,
         attack: Attack::default(),
         hearing: s.opt_int(b'l', 0).filter(|d| *d > 0).map_or(3000.0, |d| d as f32),
+        tagged: false,
     };
     Some((guard, pos))
 }
@@ -388,6 +404,7 @@ pub fn think(
     game: Res<Game>,
     mut phase: ResMut<Phase>,
     mut rng: ResMut<Rng>,
+    mut inv: ResMut<crate::items::Inventory>,
     snake: Query<(&Body, &Player), Without<Guard>>,
     mut guards: Query<(Entity, &mut Guard, &mut Body)>,
 ) {
@@ -434,6 +451,47 @@ pub fn think(
             }
             continue;
         }
+
+        // Hold-ups: Snake's gun on an unaware guard at close range.
+        let to_guard = Vec2::new(body.pos.x - snake_pos.x, body.pos.z - snake_pos.z);
+        let snake_fwd = snake_body.forward();
+        let covered = player.aiming
+            && to_guard.length() < HOLDUP_RANGE
+            && (body.pos.y - snake_pos.y).abs() < 1000.0
+            && to_guard.normalize_or_zero().angle_to(Vec2::new(snake_fwd.x, snake_fwd.z)).abs() < 0.5;
+        if let State::HeldUp { loose, shake } = g.state {
+            let frames = dt * 60.0;
+            g.level = 0;
+            g.meter = 0;
+            body.play(HANDS_UP);
+            let guard_fwd = body.forward();
+            let in_front = (-to_guard).normalize_or_zero().angle_to(Vec2::new(guard_fwd.x, guard_fwd.z)).abs() < 1.0;
+            g.state = if covered {
+                let shake = if in_front { shake + frames } else { 0.0 };
+                if shake >= TAG_FRAMES && !g.tagged {
+                    g.tagged = true;
+                    *inv.counts.entry(crate::items::DOG_TAGS).or_default() += 1;
+                    inv.message = Some(("Dog Tags".into(), 2.5));
+                }
+                State::HeldUp { loose: 0.0, shake }
+            } else if loose + frames > HOLDUP_LOOSE {
+                g.last_seen = Some(snake_pos);
+                State::Discovery { timer: 0 }
+            } else {
+                State::HeldUp { loose: loose + frames, shake }
+            };
+            continue;
+        }
+        if covered
+            && phase.kind != PhaseKind::Alert
+            && g.level < 3
+            && matches!(g.state, State::Patrol | State::Wait(_) | State::Return | State::Investigate { .. })
+        {
+            g.path.clear();
+            g.state = State::HeldUp { loose: 0.0, shake: 0.0 };
+            continue;
+        }
+
         // Sensing (FUN_00222978): perception, then the meter.
         g.level = perceive(&g, &body, snake_pos, snake_height, &game);
         if g.level == 3 {
@@ -654,7 +712,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
             }
         }
         State::Chase | State::Search { .. } => g.state = State::Return,
-        State::Asleep { .. } | State::Rouse { .. } => {}
+        State::Asleep { .. } | State::Rouse { .. } | State::HeldUp { .. } => {}
     }
 }
 

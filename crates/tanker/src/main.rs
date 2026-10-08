@@ -70,6 +70,9 @@ struct Cli {
     /// Aim the M9 at this time (seconds) and fire half a second later.
     #[arg(long)]
     fire_at: Option<f32>,
+    /// How long to aim before that shot (seconds).
+    #[arg(long, default_value_t = 0.5)]
+    aim_for: f32,
     /// Punch at these times (seconds, comma separated).
     #[arg(long, value_delimiter = ',')]
     punch_at: Vec<f32>,
@@ -538,7 +541,7 @@ fn main() -> Result<()> {
         app.insert_resource(AutoWalk { from: cli.walk_from, seconds: s });
     }
     if let Some(t) = cli.fire_at {
-        app.insert_resource(player::AutoFire(t));
+        app.insert_resource(player::AutoFire(t, cli.aim_for));
     }
     if !cli.punch_at.is_empty() {
         app.insert_resource(contact::AutoPunch(cli.punch_at.clone()));

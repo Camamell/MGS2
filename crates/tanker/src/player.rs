@@ -34,6 +34,8 @@ const WALK_SPEED: f32 = 1250.0;
 pub const RUN_SPEED: f32 = 3050.0;
 const CROUCH_SPEED: f32 = 1250.0;
 const CRAWL_SPEED: f32 = 465.0;
+/// Turning while aiming (radians per second).
+const AIM_TURN: f32 = 1.6;
 const TURN_RATE: f32 = TAU * 1.5;
 pub const RADIUS: f32 = 300.0;
 pub const HEIGHT: f32 = 1700.0;
@@ -124,9 +126,9 @@ pub struct AutoWalk {
     pub seconds: f32,
 }
 
-/// `--fire-at`: aim for half a second from this time, then fire.
+/// `--fire-at`/`--aim-for`: aim from this time for this long, then fire.
 #[derive(Resource)]
-pub struct AutoFire(pub f32);
+pub struct AutoFire(pub f32, pub f32);
 
 /// Muzzle height when aiming (mm above the feet, approximate).
 const MUZZLE: f32 = 1350.0;
@@ -160,12 +162,17 @@ pub fn control(
 
     // M9: hold F to aim along the camera's view, release to fire a dart.
     let t = time.elapsed_secs();
-    let aim = (keys.pressed(KeyCode::KeyF) || auto_fire.as_ref().is_some_and(|a| (a.0..a.0 + 0.5).contains(&t)))
+    let aim = (keys.pressed(KeyCode::KeyF) || auto_fire.as_ref().is_some_and(|a| (a.0..a.0 + a.1).contains(&t)))
         && game.entrance <= 0.0;
     if aim {
         p.aiming = true;
         p.speed = 0.0;
-        body.yaw = turn_toward(body.yaw, cam.yaw + std::f32::consts::PI, TURN_RATE * 2.0 * dt);
+        // Aim where he faces; A/D turn (the camera may swing on its own).
+        for (k, s) in [(KeyCode::KeyA, 1.0), (KeyCode::KeyD, -1.0)] {
+            if keys.pressed(k) {
+                body.yaw += s * AIM_TURN * dt;
+            }
+        }
         body.play(motion::AIM);
         return;
     }

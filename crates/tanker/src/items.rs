@@ -15,6 +15,8 @@ use crate::player::Player;
 pub const ITEM_ACTOR: u32 = 0x9AFF54;
 /// Inventory key of the M9's darts (weapon ammunition, weapon 1).
 pub const M9_AMMO: (i32, i32) = (1, 1);
+/// Inventory key of dog tags (item 33).
+pub const DOG_TAGS: (i32, i32) = (0, 33);
 /// Darts Snake starts with (an assumption, not read from the game).
 pub const M9_START: i32 = 15;
 /// Pickup reach (mm, horizontal) and height tolerance.
