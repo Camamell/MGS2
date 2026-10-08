@@ -113,6 +113,9 @@ pub struct Game {
     /// Distance (mm) Snake still walks in by himself after coming through a
     /// door (the script's entrance `mesg`); exits arm when it is over.
     pub entrance: f32,
+    /// Take the trap boxes Snake starts in as already entered (a start that
+    /// is not an arrival, so nothing should fire for it).
+    pub prime_traps: bool,
 }
 
 impl Game {
@@ -169,6 +172,11 @@ struct Prop {
 const PROP_ACTORS: &[u32] = &[0x7A8EC1, 0xD1279A, 0xCBA568];
 
 fn prop(s: &gcl::Spawn, data: &StageData) -> Option<Prop> {
+    // `-f` bit 0x100 marks helpers that are never drawn (e.g. the stretched
+    // `w04_test_bou` poles).
+    if s.opt_int(b'f', 0).is_some_and(|f| f & 0x100 != 0) {
+        return None;
+    }
     let hash = s.opt(b'm')?.first()?.int()? as u32 & 0x00FF_FFFF;
     let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == hash)?;
     let v = |l: u8, i: usize, d: i32| s.opt_int(l, i).unwrap_or(d) as f32;
@@ -271,7 +279,11 @@ fn prepare(
         let mut vm = gcl::Vm::with_banks(script, banks);
         vm.run(&script.main);
         let (gm, gmar) = (model_index(&data, "gbs_def"), motions_index(&data, "gbs"));
-        for s in vm.spawns.iter().filter(|s| s.kind == guard::GUARD_ACTOR) {
+        // An actor created again under the same name replaces the first.
+        let name = |s: &gcl::Spawn| s.args.first().and_then(|v| v.int());
+        let soldiers: Vec<&gcl::Spawn> = vm.spawns.iter().filter(|s| s.kind == guard::GUARD_ACTOR).collect();
+        let last = |i: usize| soldiers[i + 1..].iter().all(|o| name(o) != name(soldiers[i]));
+        for s in (0..soldiers.len()).filter(|i| last(*i)).map(|i| soldiers[i]) {
             if let (Some((g, mut p)), Some(m)) = (guard::from_spawn(s, 6000.0), gm) {
                 if let Some(col) = &collision {
                     if let Some(y) = col.floor_below(p.x, p.z, p.y + 1000.0) {
@@ -340,6 +352,7 @@ fn prepare(
         traps,
         snake_start: (pos, yaw),
         entrance: 0.0,
+        prime_traps: false,
     };
     if walk_in {
         game.entrance = ENTRANCE_WALK;
@@ -389,7 +402,8 @@ fn main() -> Result<()> {
     // Coming from another gameplay stage (not a cutscene `d..t`), Snake
     // walks in through the door.
     let walk_in = arrival.is_some() && from.as_deref().is_some_and(|f| f.starts_with('w'));
-    let level = prepare(&mut disc, &cli.stage, banks, walk_in, cli.spawns, cli.vision)?;
+    let mut level = prepare(&mut disc, &cli.stage, banks, walk_in, cli.spawns, cli.vision)?;
+    level.game.prime_traps = arrival.is_none();
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -674,6 +688,7 @@ fn traps(
         .unwrap_or_default();
     let yaw = ((body.yaw / std::f32::consts::TAU * 4096.0).round() as i32) & 0xFFF;
     let pressed = keys.just_pressed(KeyCode::Space);
+    let prime = std::mem::take(&mut game.prime_traps);
     let mut events = Vec::new();
     for (i, (t, was_in)) in game.traps.iter_mut().enumerate() {
         if t.actor != SNAKE_NAME {
@@ -692,6 +707,9 @@ fn traps(
             _ => None,
         };
         *was_in = now;
+        if prime {
+            continue;
+        }
         if let Some(e) = event {
             events.push((i, e));
         }
