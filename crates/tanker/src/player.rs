@@ -47,6 +47,8 @@ pub struct Player {
     pub fall_speed: f32,
     pub crouch: bool,
     pub prone: bool,
+    /// Camera forward (xz) captured when the current input began.
+    pub basis: Option<Vec2>,
     /// Current horizontal speed (mm/s); guards hear running.
     pub speed: f32,
     /// Life (script Bs16:0xf2, player+0x782) and its maximum (Bs16:0xf4).
@@ -220,6 +222,14 @@ pub fn control(
     let (f, u) = (cam_tf.forward(), cam_tf.up());
     let flat = Vec2::new(f.x, f.z);
     let fwd = if flat.length() > 0.3 { flat.normalize() } else { Vec2::new(u.x, u.z).normalize_or(Vec2::NEG_Y) };
+    // Keep the direction basis while a direction is held, so a camera cut
+    // does not turn Snake around mid-run.
+    let fwd = if input == Vec2::ZERO {
+        p.basis = None;
+        fwd
+    } else {
+        *p.basis.get_or_insert(fwd)
+    };
     let right = Vec2::new(-fwd.y, fwd.x);
     let mut dir = (fwd * input.y + right * input.x).normalize_or_zero();
     // Walking in through a door: straight ahead, no control yet.
