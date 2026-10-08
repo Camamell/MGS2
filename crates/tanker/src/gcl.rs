@@ -45,6 +45,33 @@ impl Spawn {
     }
 }
 
+/// `trap <box> <actor> -m <mode> [-b n] [-d dir range] -e { ... }`: a
+/// handler for an `.hzx` trap box (`FUN_0014A448` dispatches to it).
+#[derive(Clone, Debug)]
+pub struct Trap {
+    /// Trap box name.
+    pub area: u32,
+    /// Name of the actor it reacts to (Snake is 0x28dce6).
+    pub actor: u32,
+    /// Which events run the block, see [`trap_event`].
+    pub mode: u32,
+    /// `-b`: only while a button is pressed.
+    pub button: bool,
+    /// `-d`: only while the actor faces `dir` within `range` (4096 units).
+    pub dir: Option<(i32, i32)>,
+    pub body: Vec<Stmt>,
+}
+
+/// Trap events (the block's `$3`).
+pub mod trap_event {
+    pub const ENTER: u32 = 0x670D6B;
+    pub const STAY: u32 = 0x54A56B;
+    pub const LEAVE: u32 = 0x61D56B;
+    /// Modes: enter and leave / enter, stay and leave.
+    pub const ENTER_LEAVE: u32 = 0x14C9;
+    pub const ALL: u32 = 0x1516;
+}
+
 /// Actors that call one of their proc options as soon as they are created,
 /// as far as stage setup needs: `0xddf5ca` (enemy manager; `-w` creates the
 /// "wccomm" actor) and `0x59eda8` "wccomm" (`-e` creates the guards).
@@ -85,6 +112,7 @@ pub struct Vm<'a> {
     bank_a: Vec<u8>,
     bank_b: Vec<u8>,
     pub spawns: Vec<Spawn>,
+    pub traps: Vec<Trap>,
     /// Stage named by the first `load` reached.
     pub load: Option<String>,
     /// Run timer/fade callbacks immediately and stop at `load`.
@@ -117,6 +145,7 @@ impl<'a> Vm<'a> {
             bank_a: banks.a,
             bank_b: banks.b,
             spawns: Vec::new(),
+            traps: Vec::new(),
             load: None,
             eager: false,
             last: 0,
@@ -131,6 +160,19 @@ impl<'a> Vm<'a> {
     /// Runs a proc with integer arguments (an actor's callback).
     pub fn call_proc(&mut self, proc: u32, args: &[i32]) {
         self.call(proc, args);
+    }
+
+    /// Runs a trap's block with `[box, actor, event, x, y, z, 0]`.
+    pub fn run_block(&mut self, body: &[Stmt], args: &[i32]) {
+        self.block(body, args);
+    }
+
+    fn hash(&mut self, v: Option<&Value>, args: &[i32]) -> u32 {
+        match v.map(|v| self.value(v, args)) {
+            Some(Val::Str(s)) => str_code(s.as_bytes()),
+            Some(v) => v.int().unwrap_or(0) as u32 & 0x00FF_FFFF,
+            None => 0,
+        }
     }
 
     fn halted(&self) -> bool {
@@ -233,6 +275,22 @@ impl<'a> Vm<'a> {
             if let Some(Val::Proc(p)) = eager {
                 self.call(p, &[]);
             }
+            None
+        } else if is("trap") {
+            let opt = |l: u8| options.iter().find(|(o, _)| *o == l).map(|(_, v)| v);
+            let area = self.hash(a.first(), args);
+            let actor = self.hash(a.get(1), args);
+            let mode = self.hash(opt(b'm').and_then(|v| v.first()), args);
+            let dir = opt(b'd').map(|v| v.clone()).map(|v| {
+                let d = v.first().map_or(0, |x| self.value(x, args).int().unwrap_or(0));
+                let r = v.get(1).map_or(0x400, |x| self.value(x, args).int().unwrap_or(0x400));
+                (d, r)
+            });
+            let body = match opt(b'e').and_then(|v| v.first()) {
+                Some(Value::Block(b)) => b.clone(),
+                _ => Vec::new(),
+            };
+            self.traps.push(Trap { area, actor, mode, button: opt(b'b').is_some(), dir, body });
             None
         } else if is("load") {
             if self.load.is_none() {

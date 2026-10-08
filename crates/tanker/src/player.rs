@@ -100,7 +100,7 @@ pub fn control(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     auto: Option<Res<AutoWalk>>,
-    game: Res<Game>,
+    mut game: ResMut<Game>,
     cam: Query<&FollowCam>,
     mut q: Query<(&mut Player, &mut Body)>,
 ) {
@@ -136,7 +136,14 @@ pub fn control(
     // Camera-relative direction on the ground plane.
     let fwd = Vec2::new(-cam.yaw.sin(), -cam.yaw.cos());
     let right = Vec2::new(-fwd.y, fwd.x);
-    let dir = (fwd * input.y + right * input.x).normalize_or_zero();
+    let mut dir = (fwd * input.y + right * input.x).normalize_or_zero();
+    // Walking in through a door: straight ahead, no control yet.
+    let entering = game.entrance > 0.0;
+    let walking = walking || entering;
+    if entering {
+        let f = body.forward();
+        dir = Vec2::new(f.x, f.z).normalize_or_zero();
+    }
 
     let moving = dir != Vec2::ZERO;
     let speed = match (moving, p.crouch, walking) {
@@ -172,6 +179,14 @@ pub fn control(
         }
     }
     body.pos = next;
+    if entering {
+        let moved = Vec2::new(next.x - old.x, next.z - old.z).length();
+        game.entrance -= moved;
+        // Done, or walked into something.
+        if game.entrance <= 0.0 || moved < speed * dt * 0.25 {
+            game.entrance_done();
+        }
+    }
 
     body.play(match (p.crouch, speed) {
         (true, s) if s > 0.0 => motion::CROUCH_WALK,

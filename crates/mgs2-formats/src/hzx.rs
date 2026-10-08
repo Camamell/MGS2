@@ -19,9 +19,9 @@
 //! group (0x34 bytes): one grid cell
 //!   +00 i32 centre x, z, y (note the order; `FUN_00143F90` adds +08 to
 //!       element y). Element coordinates are relative to this centre.
-//!   +14 u16 counts: walls, floors, walls2, floors2, ?
+//!   +14 u16 counts: walls, floors, walls2, floors2, traps
 //!   +1E u16 cell index
-//!   +20 u32 -> element lists (same order)
+//!   +20 u32 -> element lists (same order; traps are [`TrapBox`] records)
 //! element (0x20 bytes)
 //!   +00 i16 bbox min xyz +06 i16 vertex count  +08 i16 bbox max xyz
 //!   +0E i16 polygon size (floors: 3 or 4)
@@ -42,6 +42,22 @@ pub struct Hzx {
     pub areas: Vec<Area>,
     /// Patrol routes (header table at +08), indexed by the guard's `-r`.
     pub routes: Vec<Route>,
+    /// Named trigger boxes for the script's `trap` command, from every
+    /// group's fifth element list (deduplicated across grid cells).
+    pub traps: Vec<TrapBox>,
+}
+
+/// One 20-byte trap record: `i16 min x, y, z, pad; i16 max x, y, z, pad;
+/// u32 name` (coordinates relative to the group centre; the pads differ
+/// between copies of the same box in different cells). The trap
+/// test checks `min <= p < max` on each axis and reports
+/// the name to the `trap` handlers (`FUN_0014A448`; the box loop is the
+/// function just before `FUN_00147EB8`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrapBox {
+    pub name: u32,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
 }
 
 #[derive(Clone, Debug, Default)]
@@ -148,13 +164,30 @@ pub fn parse(data: &[u8]) -> Result<Hzx> {
         return format_err("hzx: area table out of range");
     }
     let mut areas = Vec::with_capacity(n_areas);
+    let mut traps = Vec::new();
     for a in 0..n_areas {
         let ao = areas_off + a * 0x5C;
         let n_groups = r.u16(ao + 0x50)? as usize;
         let groups_off = r.u32(ao + 0x54)? as usize;
         let mut groups = Vec::with_capacity(n_groups);
         for g in 0..n_groups {
-            groups.push(parse_group(&r, groups_off + g * 0x34)?);
+            let go = groups_off + g * 0x34;
+            let grp = parse_group(&r, go)?;
+            let (count, list) = (r.u16(go + 0x1C)? as usize, r.u32(go + 0x30)? as usize);
+            for i in 0..count {
+                let p = list + i * 20;
+                let v = |k: usize| r.i16(p + k * 2);
+                let o = grp.origin.map(|c| c as f32);
+                let t = TrapBox {
+                    name: r.u32(p + 16)?,
+                    min: [f32::from(v(0)?) + o[0], f32::from(v(1)?) + o[1], f32::from(v(2)?) + o[2]],
+                    max: [f32::from(v(4)?) + o[0], f32::from(v(5)?) + o[1], f32::from(v(6)?) + o[2]],
+                };
+                if !traps.contains(&t) {
+                    traps.push(t);
+                }
+            }
+            groups.push(grp);
         }
         let (n_nav, nav_off) = (r.u32(ao + 4)? as usize, r.u32(ao + 0xC)? as usize);
         let mut nav = Vec::with_capacity(n_nav);
@@ -204,7 +237,7 @@ pub fn parse(data: &[u8]) -> Result<Hzx> {
         }
         routes.push(Route { points });
     }
-    Ok(Hzx { areas, routes })
+    Ok(Hzx { areas, routes, traps })
 }
 
 fn parse_group(r: &R, go: usize) -> Result<Group> {

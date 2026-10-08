@@ -102,9 +102,26 @@ pub struct Game {
     /// Script variables as they stood after the stage script ran.
     pub banks: gcl::Banks,
     pub doors: Vec<Door>,
+    /// Trap handlers the script registered, and whether Snake is "in" each.
+    pub traps: Vec<(gcl::Trap, bool)>,
     /// Snake's start, for continuing after a game over.
     pub snake_start: (Vec3, f32),
+    /// Distance (mm) Snake still walks in by himself after coming through a
+    /// door (the script's entrance `mesg`); exits arm when it is over.
+    pub entrance: f32,
 }
+
+impl Game {
+    /// Marks Snake's entrance as over (bank A 0x7e8 bit 5).
+    pub fn entrance_done(&mut self) {
+        self.entrance = 0.0;
+        self.banks.a[ENTRANCE_DONE.0] |= 1 << ENTRANCE_DONE.1;
+    }
+}
+
+/// How far Snake walks in through a door on arriving (the scripts pass
+/// about this much to the entrance `mesg`).
+const ENTRANCE_WALK: f32 = 1500.0;
 
 /// A door actor (`chara 0xebec24`): `-h` gives the two handle points and
 /// `-O` the proc run once it is opened (stage exits load the next stage
@@ -118,6 +135,12 @@ pub struct Door {
 
 const DOOR_ACTOR: u32 = 0xEBEC24;
 const PLAYER_ACTOR: u32 = 0x128946;
+/// Snake's actor name (the player `chara`'s second argument), which traps
+/// name to react to him.
+const SNAKE_NAME: u32 = 0x28DCE6;
+/// Bank A 0x7e8 bit 5: set by the stage script once Snake's entrance
+/// (walking in through the door) is over; exit traps check it.
+const ENTRANCE_DONE: (usize, u8) = (0x7E8, 5);
 /// How close (mm) Snake must be to a door's handle line to open it.
 const DOOR_REACH: f32 = 900.0;
 
@@ -149,6 +172,7 @@ struct Session {
     print_spawns: bool,
     show_vision: bool,
     use_door: Option<(usize, f32)>,
+    trace_traps: bool,
 }
 
 #[derive(Resource)]
@@ -185,7 +209,15 @@ fn set_snake_start(banks: &mut gcl::Banks, pos: [f32; 3], dir: i32) {
 
 /// Loads a stage and runs its script with `banks` (which carry Snake's
 /// start position and the story state), then works out the cast.
-fn prepare(disc: &mut Disc, name: &str, banks: gcl::Banks, print_spawns: bool, show_vision: bool) -> Result<Level> {
+/// `walk_in`: Snake comes through a door and first walks in.
+fn prepare(
+    disc: &mut Disc,
+    name: &str,
+    banks: gcl::Banks,
+    walk_in: bool,
+    print_spawns: bool,
+    show_vision: bool,
+) -> Result<Level> {
     let data = stage::load(disc, name)?;
     let collision = data.collision.as_ref().map(Collision::new);
     let nav = data.collision.as_ref().map(nav::Nav::new);
@@ -193,6 +225,7 @@ fn prepare(disc: &mut Disc, name: &str, banks: gcl::Banks, print_spawns: bool, s
     let mut guards = Vec::new();
     let mut phase = Phase::default();
     let mut doors = Vec::new();
+    let mut traps = Vec::new();
     let mut banks_after = banks.clone();
     // Snake's start: the player actor's `-p x y z -d dir`, which read the
     // start variables; else the start variables themselves.
@@ -228,7 +261,14 @@ fn prepare(disc: &mut Disc, name: &str, banks: gcl::Banks, print_spawns: bool, s
             }
         }
         phase = Phase::from_manager(vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR));
-        eprintln!("{name}: script created {} actors, {} guards, {} doors", vm.spawns.len(), guards.len(), doors.len());
+        traps = vm.traps.iter().map(|t| (t.clone(), false)).collect();
+        eprintln!(
+            "{name}: script created {} actors, {} guards, {} doors, {} traps",
+            vm.spawns.len(),
+            guards.len(),
+            doors.len(),
+            traps.len()
+        );
         if print_spawns {
             for s in &vm.spawns {
                 eprintln!("  {:06x} {:?} {:?}", s.kind, s.args, s.options);
@@ -245,20 +285,24 @@ fn prepare(disc: &mut Disc, name: &str, banks: gcl::Banks, print_spawns: bool, s
     }
     let yaw = start.1 as f32 / 4096.0 * std::f32::consts::TAU;
     let snake = model_index(&data, "sna_def").map(|m| (m, motions_index(&data, "snake"), pos, yaw));
-    Ok(Level {
-        game: Game {
-            data,
-            collision,
-            nav,
-            show_collision: false,
-            show_vision,
-            banks: banks_after,
-            doors,
-            snake_start: (pos, yaw),
-        },
-        phase,
-        cast: Cast { snake, guards },
-    })
+    let mut game = Game {
+        data,
+        collision,
+        nav,
+        show_collision: false,
+        show_vision,
+        banks: banks_after,
+        doors,
+        traps,
+        snake_start: (pos, yaw),
+        entrance: 0.0,
+    };
+    if walk_in {
+        game.entrance = ENTRANCE_WALK;
+    } else {
+        game.entrance_done();
+    }
+    Ok(Level { game, phase, cast: Cast { snake, guards } })
 }
 
 fn main() -> Result<()> {
@@ -298,7 +342,7 @@ fn main() -> Result<()> {
     if let Some(at) = cli.snake_at.as_ref().filter(|a| a.len() == 3) {
         set_snake_start(&mut banks, [at[0], at[1], at[2]], entry.map_or(0, |e| e.direction));
     }
-    let level = prepare(&mut disc, &cli.stage, banks, cli.spawns, cli.vision)?;
+    let level = prepare(&mut disc, &cli.stage, banks, false, cli.spawns, cli.vision)?;
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -316,6 +360,7 @@ fn main() -> Result<()> {
         print_spawns: cli.spawns,
         show_vision: cli.vision,
         use_door: cli.use_door.map(|d| (d, cli.door_at)),
+        trace_traps: cli.trace,
     })
     .insert_resource(Start {
         cam_yaw: cli.cam_yaw.to_radians(),
@@ -336,6 +381,7 @@ fn main() -> Result<()> {
             player::follow_camera,
             toggles,
             doors,
+            traps,
             draw_collision,
             guard::draw,
             bullet::draw,
@@ -451,7 +497,7 @@ fn doors(
     mut session: ResMut<Session>,
     mut game: ResMut<Game>,
     player: Query<(&Body, &Player)>,
-    level: Query<Entity, (With<LevelEntity>, Without<ChildOf>)>,
+    level: LevelRoots,
     bullets: Query<Entity, With<bullet::Bullet>>,
 ) {
     let Ok((body, p)) = player.single() else { return };
@@ -471,13 +517,30 @@ fn doors(
         None => None,
     };
     let Some(door) = door else { return };
+    let proc = game.doors[door].on_open;
+    info!("door {door}: opened");
+    script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(proc, &[0]), &level, &bullets);
+}
+
+type LevelRoots<'w, 's> = Query<'w, 's, Entity, (With<LevelEntity>, Without<ChildOf>)>;
+
+/// Runs a script callback the way the game would at this moment (timers
+/// and fades fire at once). Keeps the variables it sets; when it reaches
+/// `load`, replaces the stage.
+fn script_event(
+    commands: &mut Commands,
+    session: &Session,
+    game: &mut Game,
+    run: impl FnOnce(&mut gcl::Vm),
+    level: &LevelRoots,
+    bullets: &Query<Entity, With<bullet::Bullet>>,
+) {
     let Some(script) = &game.data.script else { return };
     let mut vm = gcl::Vm::with_banks(script, game.banks.clone());
     vm.eager = true;
-    vm.call_proc(game.doors[door].on_open, &[0]);
+    run(&mut vm);
     let banks = vm.banks();
     let Some(next) = vm.load.clone() else {
-        info!("door {door}: opened (no stage change)");
         game.banks = banks;
         return;
     };
@@ -490,10 +553,10 @@ fn doors(
         }
         None => next,
     };
-    info!("door {door}: loading {next}");
+    info!("loading {next}");
     let level_result = {
         let mut disc = session.disc.lock().unwrap();
-        prepare(&mut disc, &next, banks, session.print_spawns, session.show_vision)
+        prepare(&mut disc, &next, banks, true, session.print_spawns, session.show_vision)
     };
     let new = match level_result {
         Ok(l) => l,
@@ -508,6 +571,76 @@ fn doors(
     *game = new.game;
     commands.insert_resource(new.phase);
     commands.insert_resource(NewCast(Mutex::new(Some(new.cast))));
+}
+
+/// The trap boxes Snake is in, with the game's enter / stay / leave
+/// rules (`FUN_0014A448`): a handler is "in" while Snake is inside its box
+/// and its conditions (`-b` button, `-d` facing) hold.
+#[allow(clippy::too_many_arguments)]
+fn traps(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    session: Res<Session>,
+    mut game: ResMut<Game>,
+    player: Query<(&Body, &Player)>,
+    level: LevelRoots,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    use gcl::trap_event::*;
+    let Ok((body, p)) = player.single() else { return };
+    if p.dead() {
+        return;
+    }
+    let pos = body.pos + Vec3::Y * 10.0;
+    let inside: Vec<u32> = game
+        .data
+        .collision
+        .as_ref()
+        .map(|h| {
+            h.traps
+                .iter()
+                .filter(|t| (0..3).all(|k| t.min[k] <= pos[k] && pos[k] < t.max[k]))
+                .map(|t| t.name & 0x00FF_FFFF)
+                .collect()
+        })
+        .unwrap_or_default();
+    let yaw = ((body.yaw / std::f32::consts::TAU * 4096.0).round() as i32) & 0xFFF;
+    let pressed = keys.just_pressed(KeyCode::Space);
+    let mut events = Vec::new();
+    for (i, (t, was_in)) in game.traps.iter_mut().enumerate() {
+        if t.actor != SNAKE_NAME {
+            continue;
+        }
+        let in_box = inside.contains(&t.area);
+        let facing = t.dir.is_none_or(|(d, r)| {
+            let diff = (yaw - d).rem_euclid(4096);
+            diff.min(4096 - diff) <= r
+        });
+        let now = in_box && facing && (!t.button || pressed);
+        let event = match (*was_in, now) {
+            (false, true) if t.mode != LEAVE => Some(ENTER),
+            (true, true) if t.mode == STAY || t.mode == ALL => Some(STAY),
+            (true, false) if matches!(t.mode, LEAVE | ENTER_LEAVE | ALL) => Some(LEAVE),
+            _ => None,
+        };
+        *was_in = now;
+        if let Some(e) = event {
+            events.push((i, e));
+        }
+    }
+    for (i, event) in events {
+        let (t, _) = &game.traps[i];
+        let (body_stmts, area) = (t.body.clone(), t.area);
+        let args = [area as i32, SNAKE_NAME as i32, event as i32, pos.x as i32, pos.y as i32, pos.z as i32, 0];
+        if session.trace_traps && event != STAY {
+            eprintln!("trap {area:06x} event {event:06x}");
+        }
+        let name = game.data.name.clone();
+        script_event(&mut commands, &session, &mut game, |vm| vm.run_block(&body_stmts, &args), &level, &bullets);
+        if game.data.name != name {
+            break; // a new stage replaced the traps
+        }
+    }
 }
 
 fn toggles(keys: Res<ButtonInput<KeyCode>>, mut game: ResMut<Game>) {
