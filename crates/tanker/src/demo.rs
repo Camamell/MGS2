@@ -310,11 +310,30 @@ pub fn stage(
                 DemoActor { demo: di, serial: m.serial, model },
             );
             commands.entity(e).insert(Visibility::Hidden);
+            if let Some(k) = d.actors.get(&m.serial).and_then(|k| k.first()) {
+                let km = &data.models[model].1;
+                debug!(
+                    "demo {di} actor {} file {:#x} name {:#x} joints {} objects {} origin {:?} pos {:?} angles {:?} j0 {:?}",
+                    m.serial,
+                    m.file,
+                    m.name,
+                    k.joints.len(),
+                    km.objects.len(),
+                    km.origin,
+                    k.pos,
+                    k.angles,
+                    k.joints.first()
+                );
+            }
             n += 1;
         }
     }
     info!("cutscene {}: {n} models spawned", c.name);
 }
+
+/// Bones of the standard body skeleton (root, waist, chest, arms, neck,
+/// head, legs).
+const BODY_JOINTS: usize = 21;
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> Vec3 {
     Vec3::from(a).lerp(Vec3::from(b), t)
@@ -323,9 +342,9 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> Vec3 {
 /// Places the camera and poses the actors for the current frame.
 pub fn animate(
     c: Res<Cutscene>,
-    mut actors: Query<(Entity, &DemoActor, &mut Transform, &mut Visibility)>,
+    mut actors: Query<(Entity, &DemoActor, &mut Transform, &mut Visibility), Without<Part>>,
     children: Query<&Children>,
-    parts: Query<(&Part, &Mesh3d)>,
+    mut parts: Query<(&Part, &Mesh3d, &mut Visibility), Without<DemoActor>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut cam: Query<(&mut Transform, &mut Projection), (With<crate::player::FollowCam>, Without<DemoActor>)>,
 ) {
@@ -382,11 +401,13 @@ pub fn animate(
         tf.rotation = ra.slerp(rb, t);
 
         let model = &data.models[a.model].1;
+        // With an evm, only the standard body's joints match kms objects.
+        let matched = if model_info.is_some_and(|m| m.evm != 0) { BODY_JOINTS } else { usize::MAX };
         let rots: Vec<Quat> = ka
             .joints
             .iter()
             .zip(kb.joints.iter().chain(std::iter::repeat(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])))
-            .take(model.objects.len())
+            .take(model.objects.len().min(matched))
             .map(|(x, y)| {
                 let qa = Quat::from_xyzw(x[0], x[1], x[2], x[3]).normalize();
                 let qb = Quat::from_xyzw(y[0], y[1], y[2], y[3]).normalize();
@@ -399,7 +420,13 @@ pub fn animate(
         let root = ka.joints.first().map(|j| Vec3::new(j[4], j[5], j[6])).filter(|v| *v != Vec3::ZERO);
         let mats = anim::pose_joints(model, &rots, root);
         for child in children.iter_descendants(e) {
-            let Ok((part, mesh3d)) = parts.get(child) else { continue };
+            let Ok((part, mesh3d, mut pv)) = parts.get_mut(child) else { continue };
+            // Objects past the body on an evm-backed model belong to the evm
+            // (hair and the like), which is not drawn.
+            let want = if part.object >= matched { Visibility::Hidden } else { Visibility::Inherited };
+            if *pv != want {
+                *pv = want;
+            }
             let Some(mut mesh) = meshes.get_mut(&mesh3d.0) else { continue };
             let (pos, nrm) = anim::skin(model, part.object, part.mesh, &mats);
             let pos: Vec<[f32; 3]> = pos.into_iter().map(|v| (Vec3::from(v) * SCALE).into()).collect();

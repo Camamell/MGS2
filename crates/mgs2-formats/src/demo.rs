@@ -50,6 +50,10 @@ pub struct Model {
     pub name: u32,
     /// kms file id; its low 24 bits are the model's hash.
     pub file: u32,
+    /// `.evm` skinned mesh laid over the kms (+0x10; 0 = none). Its
+    /// actors' joints follow the evm skeleton, whose first 21 bones are the
+    /// standard body.
+    pub evm: u32,
     /// Frames it is loaded from and (if removed) until.
     pub from: u32,
     pub until: Option<u32>,
@@ -179,7 +183,8 @@ fn packet(chunk: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, A
             }
             4 => {
                 if let (Some(serial), Some(name), Some(file)) = (u32_at(r, 8), u32_at(r, 0x18), u32_at(r, 0x1C)) {
-                    demo.models.push(Model { serial, name, file, from: frame, until: None, shown: Vec::new() });
+                    let evm = u32_at(r, 0x10).unwrap_or(0);
+                    demo.models.push(Model { serial, name, file, evm, from: frame, until: None, shown: Vec::new() });
                 }
             }
             7 => actors(r, frame, demo, state),
