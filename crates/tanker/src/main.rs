@@ -19,6 +19,7 @@ mod nav;
 mod olga;
 mod photo;
 mod player;
+mod rain;
 mod script_cam;
 
 use std::collections::HashMap;
@@ -179,6 +180,8 @@ pub struct Game {
     pub on_alert: Option<u32>,
     /// Troopers on their way: (spawn, seconds until they arrive).
     pub arrivals: Vec<(gcl::Spawn, f32)>,
+    /// Rain on the open deck, if the stage has it.
+    pub rain: Option<rain::RainSpec>,
     /// The script ended the game (`load ... -g`).
     pub game_over: bool,
     /// The variables as the stage started (a continue goes back to them).
@@ -428,6 +431,7 @@ fn prepare(
     let mut bosses = Vec::new();
     let mut crowd = Vec::new();
     let mut on_alert = None;
+    let mut rain_spec = None;
     let mut crowd_procs = (Vec::new(), (2500.0, 7000.0));
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
@@ -469,6 +473,7 @@ fn prepare(
                 start = (Vec3::new(x as f32, y as f32, z as f32), p.opt_int(b'd', 1).unwrap_or(start.1));
             }
         }
+        rain_spec = vm.spawns.iter().find(|s| s.kind == rain::RAIN_ACTOR).and_then(rain::from_spawn);
         let manager = vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR);
         phase = Phase::from_manager(manager);
         on_alert = manager.and_then(|s| match s.opt(b'a')?.first()? {
@@ -589,6 +594,7 @@ fn prepare(
         codec_then: Vec::new(),
         on_alert,
         arrivals: Vec::new(),
+        rain: rain_spec,
         game_over: false,
         start_banks: gcl::Banks::default(),
         crowd_alarm: false,
@@ -759,6 +765,7 @@ fn main() -> Result<()> {
                 .run_if(demo::idle),
         )
         .add_systems(Update, photo::hud)
+        .add_systems(Update, (rain::setup, rain::fall).chain().after(demo::animate))
         .add_systems(Update, chapter_end.run_if(demo::idle));
     if let Some(c) = codec_data {
         app.insert_resource(c);

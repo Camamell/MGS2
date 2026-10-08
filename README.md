@@ -102,6 +102,8 @@ What works:
   door or into an exit area loads the next stage with Snake where the
   script puts him (after his walk-in). Difficulty settings come from the
   title screen's script.
+- Rain on the open decks where the stage script sets it up (`rain.c`:
+  streaks around the camera, not where its boxes exclude it).
 - The stage scripts' own cameras (follow-in-box and fixed, switched by traps)
   frame each area as in the game, with faces culled the way the PS2 does so
   ceilings drop away under overhead views; elsewhere (or with F3) a follow
