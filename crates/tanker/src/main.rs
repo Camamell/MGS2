@@ -898,8 +898,8 @@ fn skip_cutscene(disc: &mut Disc, iso: &std::path::Path, name: String, banks: &m
         _ => Vec::new(),
     };
     for target in targets.iter().filter(|t| t.starts_with('w')) {
-        if let Ok(arrivals) = stage::arrivals(disc, &name, target) {
-            if let Some(a) = arrivals.first() {
+        if let Ok(arrivals) = stage::arrivals(disc, &name, target)
+            && let Some(a) = arrivals.first() {
                 set_snake_start(banks, a.entry.position, a.entry.direction);
                 if let Some(p) = a.progress {
                     banks.set_a32(gcl::PROGRESS, p as i32);
@@ -907,7 +907,6 @@ fn skip_cutscene(disc: &mut Disc, iso: &std::path::Path, name: String, banks: &m
                 info!("skipping cutscene {name} -> {target}");
                 return (target.clone(), cutscene);
             }
-        }
     }
     (name, None)
 }
@@ -916,11 +915,10 @@ fn collect_loads(stmts: &[mgs2_formats::gcx::Stmt], out: &mut Vec<String>) {
     use mgs2_formats::gcx::{Stmt, Value};
     for s in stmts {
         if let Stmt::Command { name, args, options } = s {
-            if *name == str_code(b"load") {
-                if let Some(Value::Str(t)) = args.first() {
+            if *name == str_code(b"load")
+                && let Some(Value::Str(t)) = args.first() {
                     out.push(t.clone());
                 }
-            }
             for v in args.iter().chain(options.iter().flat_map(|(_, v)| v)) {
                 if let Value::Block(b) = v {
                     collect_loads(b, out);

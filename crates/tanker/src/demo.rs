@@ -35,13 +35,11 @@ pub fn demo_ids(script: &Gcx) -> Vec<u32> {
                         Some(Value::Name(h)) => *h == str_code(b"demo"),
                         _ => false,
                     };
-                if is_demo {
-                    if let Some(Value::Int(_, id)) = options.iter().find(|(l, _)| *l == b'i').and_then(|(_, v)| v.first()) {
-                        if !out.contains(&(*id as u32)) {
+                if is_demo
+                    && let Some(Value::Int(_, id)) = options.iter().find(|(l, _)| *l == b'i').and_then(|(_, v)| v.first())
+                        && !out.contains(&(*id as u32)) {
                             out.push(*id as u32);
                         }
-                    }
-                }
                 for v in args.iter().chain(options.iter().flat_map(|(_, v)| v)) {
                     if let Value::Block(b) = v {
                         walk(b, out);
@@ -71,7 +69,7 @@ pub fn subtitles(iso: &Path, id: u32) -> anyhow::Result<Vec<Line>> {
         let kind = u32::from_le_bytes(head[..4].try_into().unwrap());
         let size = u32::from_le_bytes(head[4..].try_into().unwrap()) as u64;
         // The next demo's header, or nothing sensible: the end.
-        if size < 8 || size > 0x10_0000 || (kind == 0x10 && n > 2) {
+        if !(8..=0x10_0000).contains(&size) || (kind == 0x10 && n > 2) {
             break;
         }
         if kind == 4 {

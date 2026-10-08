@@ -92,7 +92,7 @@ fn write_obj(model: &kms::Model, stem: &str, dir: &Path, textures: &HashMap<u32,
             }
             writeln!(obj, "g obj{oi}_mesh{mi}\nusemtl t{tex:06x}")?;
             let (has_uv, has_n) = (!m.uvs.is_empty(), !m.normals.is_empty());
-            for t in m.indices.chunks_exact(3) {
+            for t in m.indices.as_chunks::<3>().0 {
                 obj.push('f');
                 for &i in t {
                     let v = base + i;

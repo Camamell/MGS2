@@ -315,15 +315,14 @@ fn input(keys: Res<ButtonInput<KeyCode>>, mut v: ResMut<Viewer>) {
             v.anim.motion = if shift { (v.anim.motion + count - 1) % count } else { (v.anim.motion + 1) % count };
             v.anim.frame = 0.0;
         }
-        if keys.just_pressed(KeyCode::KeyJ) {
-            if let Some((_, model)) = v.browse.and_then(|i| v.data.models.get(i)) {
+        if keys.just_pressed(KeyCode::KeyJ)
+            && let Some((_, model)) = v.browse.and_then(|i| v.data.models.get(i)) {
                 let sets = v.data.motion_sets_for(model);
                 let pos = sets.iter().position(|s| *s == set).map_or(0, |p| (p + 1) % sets.len());
                 v.anim.set = sets.get(pos).copied();
                 v.anim.motion = 0;
                 v.anim.frame = 0.0;
             }
-        }
     }
     if keys.just_pressed(KeyCode::Space) {
         v.anim.playing = !v.anim.playing;
