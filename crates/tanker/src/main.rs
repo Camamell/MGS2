@@ -1,8 +1,9 @@
 //! Metal Gear Solid 2: the Tanker chapter, rebuilt on Bevy from the data on
 //! your own disc.
 //!
-//! Controls: WASD move (run), Shift walk, C crouch, Q/E or right mouse drag to
-//! turn the camera, F1 collision overlay, F2 guard vision cones.
+//! Controls: WASD move (run), Shift walk, C crouch, Space action (doors),
+//! Q/E or right mouse drag to turn the camera, F1 collision overlay, F2
+//! guard vision cones.
 
 mod body;
 mod bullet;
@@ -13,12 +14,13 @@ mod nav;
 mod player;
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use bevy::prelude::*;
 use clap::Parser;
 use mgs2_bevy::scene::{self, MaterialCache, SCALE};
-use mgs2_bevy::stage::{self, StageData};
+use mgs2_bevy::stage::{self, Disc, StageData};
 use mgs2_formats::str_code;
 
 use body::Body;
@@ -66,6 +68,11 @@ struct Cli {
     /// Put Snake here instead (mm, `--snake-at=x,y,z`; for testing).
     #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
     snake_at: Option<Vec<f32>>,
+    /// Open the n-th door of the stage after `--door-at` seconds (testing).
+    #[arg(long)]
+    use_door: Option<usize>,
+    #[arg(long, default_value_t = 3.0)]
+    door_at: f32,
     /// Start with guard vision cones shown.
     #[arg(long)]
     vision: bool,
@@ -92,22 +99,60 @@ pub struct Game {
     pub nav: Option<nav::Nav>,
     pub show_collision: bool,
     pub show_vision: bool,
+    /// Script variables as they stood after the stage script ran.
+    pub banks: gcl::Banks,
+    pub doors: Vec<Door>,
+    /// Snake's start, for continuing after a game over.
+    pub snake_start: (Vec3, f32),
 }
 
-/// Characters to spawn at startup: (component bundle kind, model, motions,
-/// position, facing).
+/// A door actor (`chara 0xebec24`): `-h` gives the two handle points and
+/// `-O` the proc run once it is opened (stage exits load the next stage
+/// from there).
+#[derive(Clone, Debug)]
+pub struct Door {
+    pub a: Vec3,
+    pub b: Vec3,
+    pub on_open: u32,
+}
+
+const DOOR_ACTOR: u32 = 0xEBEC24;
+const PLAYER_ACTOR: u32 = 0x128946;
+/// How close (mm) Snake must be to a door's handle line to open it.
+const DOOR_REACH: f32 = 900.0;
+
+/// Characters to spawn for a freshly loaded stage.
 struct Cast {
     snake: Option<(usize, Option<usize>, Vec3, f32)>,
     guards: Vec<(Guard, usize, Option<usize>, Vec3)>,
 }
 
+/// A stage ready to be put into the world.
+struct Level {
+    game: Game,
+    phase: Phase,
+    cast: Cast,
+}
+
+/// Everything that belongs to the current stage; despawned on a change.
+#[derive(Component, Clone)]
+struct LevelEntity;
+
+/// Set while a newly loaded stage waits to be spawned.
+#[derive(Resource)]
+struct NewCast(Mutex<Option<Cast>>);
+
+#[derive(Resource)]
+struct Session {
+    disc: Mutex<Disc>,
+    difficulty: i16,
+    print_spawns: bool,
+    show_vision: bool,
+    use_door: Option<(usize, f32)>,
+}
+
 #[derive(Resource)]
 struct Start {
-    cast: std::sync::Mutex<Option<Cast>>,
-    difficulty: i16,
-    /// Snake's start, for continuing after a game over.
-    snake_start: Option<(Vec3, f32)>,
-    caution_time: i32,
     cam_yaw: f32,
     cam_dist: f32,
     cam_pitch: f32,
@@ -132,44 +177,32 @@ fn motions_index(data: &StageData, name: &str) -> Option<usize> {
     data.motions.iter().position(|(h, _)| *h == str_code(name.as_bytes()))
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let iso = cli.iso.or_else(stage::default_iso).context("pass --iso <path to MGS2 .iso> or set MGS2_ISO")?;
-    let mut disc = stage::open_disc(&iso)?;
-    let data = stage::load(&mut disc, &cli.stage)?;
+fn set_snake_start(banks: &mut gcl::Banks, pos: [f32; 3], dir: i32) {
+    for (off, v) in [(gcl::SNAKE_X, pos[0] as i32), (gcl::SNAKE_Y, pos[1] as i32), (gcl::SNAKE_Z, pos[2] as i32), (gcl::SNAKE_DIR, dir)] {
+        banks.set_a32(off, v);
+    }
+}
+
+/// Loads a stage and runs its script with `banks` (which carry Snake's
+/// start position and the story state), then works out the cast.
+fn prepare(disc: &mut Disc, name: &str, banks: gcl::Banks, print_spawns: bool, show_vision: bool) -> Result<Level> {
+    let data = stage::load(disc, name)?;
     let collision = data.collision.as_ref().map(Collision::new);
     let nav = data.collision.as_ref().map(nav::Nav::new);
 
-    // Snake's start: how the previous stage sends him here, else one of this
-    // stage's own entry points; dropped onto the floor.
-    let from = cli.from.clone().or_else(|| (cli.stage == "w00a").then(|| "d01t".to_string()));
-    let arrival = match from.as_deref() {
-        Some("none") | None => None,
-        Some(f) => stage::arrivals(&mut disc, f, &cli.stage)?.get(cli.arrival).copied(),
-    };
-    let progress = arrival.and_then(|a| a.progress);
-    let entry = arrival.map(|a| a.entry).or_else(|| data.entries.get(cli.entry).copied());
-    let (mut pos, direction) = entry.map_or((Vec3::ZERO, 0), |e| (Vec3::from(e.position), e.direction));
-    if let Some(at) = cli.snake_at.as_ref().filter(|a| a.len() == 3) {
-        pos = Vec3::new(at[0], at[1], at[2]);
-    }
-    if let Some(col) = &collision {
-        if let Some(y) = col.floor_below(pos.x, pos.z, pos.y + 2000.0) {
-            pos.y = y;
-        }
-    }
-    let snake = model_index(&data, "sna_def")
-        .map(|m| (m, motions_index(&data, "snake"), pos, direction as f32 / 4096.0 * std::f32::consts::TAU));
-
-    // Run the stage script to find out which guards it creates.
     let mut guards = Vec::new();
     let mut phase = Phase::default();
+    let mut doors = Vec::new();
+    let mut banks_after = banks.clone();
+    // Snake's start: the player actor's `-p x y z -d dir`, which read the
+    // start variables; else the start variables themselves.
+    let a32 = |o: u16| banks.a32(o);
+    let mut start = (
+        Vec3::new(a32(gcl::SNAKE_X) as f32, a32(gcl::SNAKE_Y) as f32, a32(gcl::SNAKE_Z) as f32),
+        a32(gcl::SNAKE_DIR),
+    );
     if let Some(script) = &data.script {
-        let mut vm = gcl::Vm::new(script);
-        vm.set_b16(gcl::DIFFICULTY, cli.difficulty);
-        if let Some(p) = progress {
-            vm.set_a32(gcl::PROGRESS, p);
-        }
+        let mut vm = gcl::Vm::with_banks(script, banks);
         vm.run(&script.main);
         let (gm, gmar) = (model_index(&data, "gbs_def"), motions_index(&data, "gbs"));
         for s in vm.spawns.iter().filter(|s| s.kind == guard::GUARD_ACTOR) {
@@ -182,14 +215,81 @@ fn main() -> Result<()> {
                 guards.push((g, m, gmar, p));
             }
         }
+        for s in vm.spawns.iter().filter(|s| s.kind == DOOR_ACTOR) {
+            let h = |i| s.opt_int(b'h', i).unwrap_or(0) as f32;
+            if let Some(gcl::Val::Proc(p)) = s.opt(b'O').and_then(|v| v.first()) {
+                doors.push(Door { a: Vec3::new(h(0), h(1), h(2)), b: Vec3::new(h(3), h(4), h(5)), on_open: *p });
+            }
+        }
+        if let Some(p) = vm.spawns.iter().find(|s| s.kind == PLAYER_ACTOR) {
+            let (x, y, z) = (p.opt_int(b'p', 0), p.opt_int(b'p', 1), p.opt_int(b'p', 2));
+            if let (Some(x), Some(y), Some(z)) = (x, y, z) {
+                start = (Vec3::new(x as f32, y as f32, z as f32), p.opt_int(b'd', 1).unwrap_or(start.1));
+            }
+        }
         phase = Phase::from_manager(vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR));
-        eprintln!("script created {} actors, {} guards", vm.spawns.len(), guards.len());
-        if cli.spawns {
+        eprintln!("{name}: script created {} actors, {} guards, {} doors", vm.spawns.len(), guards.len(), doors.len());
+        if print_spawns {
             for s in &vm.spawns {
                 eprintln!("  {:06x} {:?} {:?}", s.kind, s.args, s.options);
             }
         }
+        banks_after = vm.banks();
     }
+
+    let mut pos = start.0;
+    if let Some(col) = &collision {
+        if let Some(y) = col.floor_below(pos.x, pos.z, pos.y + 2000.0) {
+            pos.y = y;
+        }
+    }
+    let yaw = start.1 as f32 / 4096.0 * std::f32::consts::TAU;
+    let snake = model_index(&data, "sna_def").map(|m| (m, motions_index(&data, "snake"), pos, yaw));
+    Ok(Level {
+        game: Game {
+            data,
+            collision,
+            nav,
+            show_collision: false,
+            show_vision,
+            banks: banks_after,
+            doors,
+            snake_start: (pos, yaw),
+        },
+        phase,
+        cast: Cast { snake, guards },
+    })
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let iso = cli.iso.or_else(stage::default_iso).context("pass --iso <path to MGS2 .iso> or set MGS2_ISO")?;
+    let mut disc = stage::open_disc(&iso)?;
+
+    // Snake's start: how the previous stage sends him here, else one of this
+    // stage's own entry points.
+    let mut banks = gcl::Banks::default();
+    banks.set_b16(gcl::DIFFICULTY, cli.difficulty);
+    let from = cli.from.clone().or_else(|| (cli.stage == "w00a").then(|| "d01t".to_string()));
+    let arrival = match from.as_deref() {
+        Some("none") | None => None,
+        Some(f) => stage::arrivals(&mut disc, f, &cli.stage)?.get(cli.arrival).copied(),
+    };
+    if let Some(p) = arrival.and_then(|a| a.progress) {
+        banks.set_a32(gcl::PROGRESS, p as i32);
+    }
+    let entry = match arrival {
+        Some(a) => Some(a.entry),
+        // The stage's own entries need its data; peek at them first.
+        None => stage::load(&mut disc, &cli.stage)?.entries.get(cli.entry).copied(),
+    };
+    if let Some(e) = entry {
+        set_snake_start(&mut banks, e.position, e.direction);
+    }
+    if let Some(at) = cli.snake_at.as_ref().filter(|a| a.len() == 3) {
+        set_snake_start(&mut banks, [at[0], at[1], at[2]], entry.map_or(0, |e| e.direction));
+    }
+    let level = prepare(&mut disc, &cli.stage, banks, cli.spawns, cli.vision)?;
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -197,20 +297,28 @@ fn main() -> Result<()> {
         ..default()
     }))
     .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.05)))
-    .insert_resource(Game { data, collision, nav, show_collision: false, show_vision: cli.vision })
+    .insert_resource(level.game)
+    .insert_resource(level.phase)
+    .insert_resource(NewCast(Mutex::new(Some(level.cast))))
     .insert_resource(bullet::Rng(0x2001_1113))
-    .insert_resource(Start {
+    .insert_resource(Session {
+        disc: Mutex::new(disc),
         difficulty: cli.difficulty,
-        snake_start: snake.map(|s| (s.2, s.3)),
-        caution_time: phase.caution_time,
-        cast: std::sync::Mutex::new(Some(Cast { snake, guards })),
-        cam_yaw: cli.cam_yaw.to_radians(), cam_dist: cli.cam_dist, cam_pitch: cli.cam_pitch.to_radians(), follow_guard: cli.follow_guard,
+        print_spawns: cli.spawns,
+        show_vision: cli.vision,
+        use_door: cli.use_door.map(|d| (d, cli.door_at)),
     })
-    .insert_resource(phase)
+    .insert_resource(Start {
+        cam_yaw: cli.cam_yaw.to_radians(),
+        cam_dist: cli.cam_dist,
+        cam_pitch: cli.cam_pitch.to_radians(),
+        follow_guard: cli.follow_guard,
+    })
     .add_systems(Startup, setup)
     .add_systems(
         Update,
         (
+            spawn_level.run_if(resource_exists::<NewCast>),
             player::control,
             guard::think,
             bullet::fly,
@@ -218,6 +326,7 @@ fn main() -> Result<()> {
             body::skin,
             player::follow_camera,
             toggles,
+            doors,
             draw_collision,
             guard::draw,
             bullet::draw,
@@ -238,20 +347,54 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Camera, light and HUD: these live across stages.
+fn setup(mut commands: Commands, start: Res<Start>) {
+    commands.spawn((
+        Camera3d::default(),
+        Transform::default(),
+        FollowCam {
+            yaw: start.cam_yaw,
+            pitch: start.cam_pitch,
+            distance: start.cam_dist,
+            current: start.cam_dist,
+            guard: start.follow_guard,
+        },
+    ));
+    commands.insert_resource(GlobalAmbientLight { brightness: 400.0, ..default() });
+    commands.spawn((
+        Hud,
+        Text::new(""),
+        TextFont { font_size: bevy::text::FontSize::Px(14.0), ..default() },
+        Node { position_type: PositionType::Absolute, top: px(8), left: px(8), ..default() },
+    ));
+}
+
+/// Puts the current stage's level geometry and cast into the world.
 #[allow(clippy::too_many_arguments)]
-fn setup(
+fn spawn_level(
     mut commands: Commands,
     game: Res<Game>,
-    start: Res<Start>,
+    session: Res<Session>,
+    new: Res<NewCast>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut cams: Query<&mut FollowCam>,
+    mut first: Local<bool>,
 ) {
+    let cast = new.0.lock().unwrap().take();
+    // After a stage change, look over Snake's shoulder the way he faces.
+    if std::mem::replace(&mut *first, true) {
+        if let (Some((_, _, _, yaw)), Ok(mut cam)) = (cast.as_ref().and_then(|c| c.snake), cams.single_mut()) {
+            cam.yaw = yaw + std::f32::consts::PI;
+        }
+    }
+    commands.remove_resource::<NewCast>();
+    let Some(cast) = cast else { return };
     let mut cache = MaterialCache::default();
     let unlit = true;
     let data = &game.data;
-    scene::spawn_level(&mut commands, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, ());
-    let Some(cast) = start.cast.lock().unwrap().take() else { return };
+    scene::spawn_level(&mut commands, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
     let mut spawn = |commands: &mut Commands, model: usize, bundle: Body| {
         scene::spawn_model(
             commands,
@@ -262,13 +405,13 @@ fn setup(
             &mut images,
             &mut materials,
             unlit,
-            bundle,
+            (bundle, LevelEntity),
         )
     };
     match cast.snake {
         Some((model, motions, pos, yaw)) => {
             let e = spawn(&mut commands, model, Body { pos, yaw, model, motions, motion: 0, frame: 0.0 });
-            commands.entity(e).insert(Player::new(start.difficulty));
+            commands.entity(e).insert(Player::new(session.difficulty));
         }
         None => error!("Snake's model (sna_def) not found"),
     }
@@ -276,18 +419,86 @@ fn setup(
         let e = spawn(&mut commands, model, Body { pos, yaw: 0.0, model, motions, motion: 0, frame: 0.0 });
         commands.entity(e).insert(g);
     }
-    commands.spawn((
-        Camera3d::default(),
-        Transform::default(),
-        FollowCam { yaw: start.cam_yaw, pitch: start.cam_pitch, distance: start.cam_dist, current: start.cam_dist, guard: start.follow_guard },
-    ));
-    commands.insert_resource(GlobalAmbientLight { brightness: 400.0, ..default() });
-    commands.spawn((
-        Hud,
-        Text::new(""),
-        TextFont { font_size: bevy::text::FontSize::Px(14.0), ..default() },
-        Node { position_type: PositionType::Absolute, top: px(8), left: px(8), ..default() },
-    ));
+}
+
+/// The door Snake can open from where he stands, if any.
+fn door_in_reach(game: &Game, snake: Vec3) -> Option<usize> {
+    game.doors.iter().position(|d| {
+        let (a, b, p) = (d.a.xz(), d.b.xz(), snake.xz());
+        let ab = b - a;
+        let t = if ab.length_squared() > 1.0 { ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+        (a + ab * t).distance(p) < DOOR_REACH && (snake.y - d.a.y).abs() < 1000.0
+    })
+}
+
+/// Space at a door runs its `-O` proc like the game does once the door is
+/// open; a stage exit there sets Snake's next start and `load`s the next
+/// stage, which replaces the current one.
+#[allow(clippy::too_many_arguments)]
+fn doors(
+    mut commands: Commands,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut session: ResMut<Session>,
+    mut game: ResMut<Game>,
+    player: Query<(&Body, &Player)>,
+    level: Query<Entity, (With<LevelEntity>, Without<ChildOf>)>,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    let Ok((body, p)) = player.single() else { return };
+    if p.dead() {
+        return;
+    }
+    let forced = match session.use_door {
+        Some((d, at)) if time.elapsed_secs() >= at => {
+            session.use_door = None;
+            Some(d)
+        }
+        _ => None,
+    };
+    let door = match forced {
+        Some(d) => Some(d).filter(|d| *d < game.doors.len()),
+        None if keys.just_pressed(KeyCode::Space) => door_in_reach(&game, body.pos),
+        None => None,
+    };
+    let Some(door) = door else { return };
+    let Some(script) = &game.data.script else { return };
+    let mut vm = gcl::Vm::with_banks(script, game.banks.clone());
+    vm.eager = true;
+    vm.call_proc(game.doors[door].on_open, &[0]);
+    let banks = vm.banks();
+    let Some(next) = vm.load.clone() else {
+        info!("door {door}: opened (no stage change)");
+        game.banks = banks;
+        return;
+    };
+    let next = match next.strip_prefix('#') {
+        // A hashed name: find the stage it stands for.
+        Some(h) => {
+            let h = u32::from_str_radix(h, 16).unwrap_or(0);
+            let disc = session.disc.lock().unwrap();
+            stage::tanker_stages(&disc).into_iter().find(|s| str_code(s.as_bytes()) == h).unwrap_or(next)
+        }
+        None => next,
+    };
+    info!("door {door}: loading {next}");
+    let level_result = {
+        let mut disc = session.disc.lock().unwrap();
+        prepare(&mut disc, &next, banks, session.print_spawns, session.show_vision)
+    };
+    let new = match level_result {
+        Ok(l) => l,
+        Err(e) => {
+            error!("loading {next}: {e:#}");
+            return;
+        }
+    };
+    for e in level.iter().chain(bullets.iter()) {
+        commands.entity(e).despawn();
+    }
+    *game = new.game;
+    commands.insert_resource(new.phase);
+    commands.insert_resource(NewCast(Mutex::new(Some(new.cast))));
 }
 
 fn toggles(keys: Res<ButtonInput<KeyCode>>, mut game: ResMut<Game>) {
@@ -300,6 +511,9 @@ fn toggles(keys: Res<ButtonInput<KeyCode>>, mut game: ResMut<Game>) {
 }
 
 fn draw_collision(game: Res<Game>, mut gizmos: Gizmos) {
+    for d in &game.doors {
+        gizmos.line(d.a * SCALE + Vec3::Y, d.b * SCALE + Vec3::Y, Color::srgb(0.2, 1.0, 1.0));
+    }
     if !game.show_collision {
         return;
     }
@@ -334,7 +548,8 @@ fn draw_collision(game: Res<Game>, mut gizmos: Gizmos) {
 fn game_over(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    start: Res<Start>,
+    session: Res<Session>,
+    game: Res<Game>,
     mut phase: ResMut<Phase>,
     mut player: Query<(&mut Player, &mut Body), Without<Guard>>,
     mut guards: Query<&mut Guard>,
@@ -344,13 +559,11 @@ fn game_over(
     if !p.dead() || !keys.just_pressed(KeyCode::Enter) {
         return;
     }
-    *p = Player::new(start.difficulty);
-    if let Some((pos, yaw)) = start.snake_start {
-        body.pos = pos;
-        body.yaw = yaw;
-    }
+    *p = Player::new(session.difficulty);
+    (body.pos, body.yaw) = game.snake_start;
+    let caution_time = phase.caution_time;
     *phase = Phase::default();
-    phase.caution_time = start.caution_time;
+    phase.caution_time = caution_time;
     for mut g in &mut guards {
         g.reset();
     }
@@ -382,13 +595,15 @@ fn hud(
     } else {
         format!("LIFE {} {}/{}{}", bar(p.life, p.max_life), p.life, p.max_life, if p.hurt > 0.0 { "  HIT!" } else { "" })
     };
+    let prompt = if door_in_reach(&game, b.pos).is_some() { "  [Space] open door" } else { "" };
     **t = format!(
-        "{}  {}  guards {}\n{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
-         WASD move  Shift walk  C crouch  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
+        "{}  {}  guards {}\n{}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
+         WASD move  Shift walk  C crouch  Space action  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
         game.data.name,
         status,
         guards.iter().count(),
         life,
+        prompt,
         b.pos.x,
         b.pos.y,
         b.pos.z,
@@ -408,8 +623,3 @@ fn capture(mut commands: Commands, time: Res<Time>, mut c: ResMut<Capture>, mut 
         exit.write(AppExit::Success);
     }
 }
-
-
-
-
-

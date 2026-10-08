@@ -54,36 +54,87 @@ pub const DIFFICULTY: u16 = 0x8;
 /// Story marker (bank A u32) set by the stage that sent Snake here.
 pub const PROGRESS: u16 = 0xC4;
 
+/// Snake's position and facing for the next stage (bank A u32), as set by
+/// a stage exit before `load` and read by the player actor's `-p`/`-d`.
+pub const SNAKE_X: u16 = 0xBC;
+pub const SNAKE_Y: u16 = 0x7F4;
+pub const SNAKE_Z: u16 = 0xC0;
+pub const SNAKE_DIR: u16 = 0x7F8;
+
+/// Actors that run their callback right away when the VM runs a stage
+/// exit (`eager`): `delay` timers (`-e` block) and the fade-out `0xe22388`
+/// (`-p` proc), so a door's exit proc reaches its `load`.
+const EAGER: &[u32] = &[0xE22388];
+
+/// The two variable banks, kept across stages like the game does.
+#[derive(Clone)]
+pub struct Banks {
+    pub a: Vec<u8>,
+    pub b: Vec<u8>,
+}
+
+impl Default for Banks {
+    fn default() -> Self {
+        Self { a: vec![0; 0x10000], b: vec![0; 0x10000] }
+    }
+}
+
 pub struct Vm<'a> {
     procs: HashMap<u32, &'a [Stmt]>,
     /// Bank at 0x191918 (`A` in disassembly) and 0x191910 (`B`).
     bank_a: Vec<u8>,
     bank_b: Vec<u8>,
     pub spawns: Vec<Spawn>,
+    /// Stage named by the first `load` reached.
+    pub load: Option<String>,
+    /// Run timer/fade callbacks immediately and stop at `load`.
+    pub eager: bool,
     last: i32,
     depth: u32,
 }
 
+impl Banks {
+    pub fn a32(&self, offset: u16) -> i32 {
+        let o = offset as usize;
+        i32::from_le_bytes(self.a[o..o + 4].try_into().unwrap())
+    }
+
+    pub fn set_a32(&mut self, offset: u16, v: i32) {
+        let o = offset as usize;
+        self.a[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn set_b16(&mut self, offset: u16, v: i16) {
+        let o = offset as usize;
+        self.b[o..o + 2].copy_from_slice(&v.to_le_bytes());
+    }
+}
+
 impl<'a> Vm<'a> {
-    pub fn new(gcx: &'a Gcx) -> Self {
+    pub fn with_banks(gcx: &'a Gcx, banks: Banks) -> Self {
         Self {
             procs: gcx.procs.iter().map(|p| (p.id, p.body.as_slice())).collect(),
-            bank_a: vec![0; 0x10000],
-            bank_b: vec![0; 0x10000],
+            bank_a: banks.a,
+            bank_b: banks.b,
             spawns: Vec::new(),
+            load: None,
+            eager: false,
             last: 0,
             depth: 0,
         }
     }
 
-    pub fn set_a32(&mut self, offset: u16, v: u32) {
-        let o = offset as usize;
-        self.bank_a[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    pub fn banks(&self) -> Banks {
+        Banks { a: self.bank_a.clone(), b: self.bank_b.clone() }
     }
 
-    pub fn set_b16(&mut self, offset: u16, v: i16) {
-        let o = offset as usize;
-        self.bank_b[o..o + 2].copy_from_slice(&v.to_le_bytes());
+    /// Runs a proc with integer arguments (an actor's callback).
+    pub fn call_proc(&mut self, proc: u32, args: &[i32]) {
+        self.call(proc, args);
+    }
+
+    fn halted(&self) -> bool {
+        self.eager && self.load.is_some()
     }
 
     pub fn run(&mut self, stmts: &[Stmt]) {
@@ -98,6 +149,9 @@ impl<'a> Vm<'a> {
         self.depth += 1;
         let mut result = None;
         for s in stmts {
+            if self.halted() {
+                break;
+            }
             if let Some(r) = self.stmt(s, args) {
                 result = Some(r);
                 break;
@@ -155,7 +209,11 @@ impl<'a> Vm<'a> {
             Some(a.first().map_or(0, |v| self.value(v, args).int().unwrap_or(0)))
         } else if is("chara") {
             let mut vals = a.iter().map(|v| self.value(v, args));
-            let Some(kind) = vals.next().and_then(|v| v.int()) else { return None };
+            let kind = match vals.next() {
+                Some(Val::Str(s)) => str_code(s.as_bytes()) as i32,
+                Some(v) => v.int()?,
+                None => return None,
+            };
             let spawn = Spawn {
                 kind: kind as u32 & 0x00FF_FFFF,
                 args: vals.collect(),
@@ -165,9 +223,24 @@ impl<'a> Vm<'a> {
                 .iter()
                 .find(|(k, _)| *k == spawn.kind)
                 .and_then(|(_, l)| spawn.opt(*l)?.first().cloned());
+            let eager = (self.eager && EAGER.contains(&spawn.kind))
+                .then(|| spawn.opt(b'p').and_then(|v| v.first().cloned()))
+                .flatten();
             self.spawns.push(spawn);
             if let Some(Val::Proc(p)) = on_create {
                 self.call(p, &[]);
+            }
+            if let Some(Val::Proc(p)) = eager {
+                self.call(p, &[]);
+            }
+            None
+        } else if is("load") {
+            if self.load.is_none() {
+                self.load = match a.first().map(|v| self.value(v, args)) {
+                    Some(Val::Str(s)) => Some(s),
+                    Some(Val::Name(h)) => Some(format!("#{h:06x}")),
+                    _ => None,
+                };
             }
             None
         } else if is("command") {
@@ -177,6 +250,8 @@ impl<'a> Vm<'a> {
                     return self.block(b, args);
                 }
             }
+            // Other commands' results are not modelled; read as 0.
+            self.last = 0;
             None
         } else {
             // mesg, trap, print, load, restart, command, ...: not yet.

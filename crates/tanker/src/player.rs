@@ -211,14 +211,44 @@ pub fn follow_camera(
         c.yaw -= 2.0 * dt;
     }
     let target = b.pos * SCALE + Vec3::Y * 0.9;
-    let back = Vec3::new(c.yaw.sin(), 0.0, c.yaw.cos()) * c.pitch.cos() + Vec3::Y * c.pitch.sin();
-    // Keep walls and decks out of the way: pull in at once when blocked,
-    // ease back out when clear.
+    let manual = buttons.pressed(MouseButton::Right) || keys.pressed(KeyCode::KeyQ) || keys.pressed(KeyCode::KeyE);
+    let dir = |yaw: f32| Vec3::new(yaw.sin(), 0.0, yaw.cos()) * c.pitch.cos() + Vec3::Y * c.pitch.sin();
+    let mut back = dir(c.yaw);
     let mut want = c.distance;
     if let Some(col) = &game.collision {
-        let (from, to) = (target / SCALE, (target + back * c.distance) / SCALE);
-        if let Some(t) = col.ray(from, to) {
-            want = (c.distance * t - 0.3).max(0.8);
+        let from = target / SCALE;
+        // Where the camera can be along `back`: under the ceiling (the floor
+        // above), flattening the view rather than closing in, then pulled in
+        // in front of walls.
+        let place = |back: Vec3| -> (Vec3, f32) {
+            let mut cam = from + back * c.distance / SCALE;
+            if let Some(t) = col.ray(from, from + Vec3::Y * 20000.0) {
+                let ceiling = from.y + t * 20000.0 - 300.0;
+                cam.y = cam.y.min(ceiling.max(from.y));
+            }
+            let offset = (cam - from) * SCALE;
+            let mut d = offset.length();
+            if let Some(t) = col.ray(from, cam) {
+                d = (d * t - 0.3).max(0.8);
+            }
+            // Outside the playable area there are no walls to stop the
+            // camera, so also require floor under it.
+            let at = from + offset.normalize_or(back) * d / SCALE;
+            if !col.floor_below(at.x, at.z, at.y).is_some_and(|y| y > from.y - 3000.0) {
+                d = d.min(0.8);
+            }
+            (offset.normalize_or(back), d)
+        };
+        (back, want) = place(back);
+        // Boxed in (just through a door, in a corridor): swing round to the
+        // nearest clear side.
+        if !manual && want < c.distance * 0.5 {
+            let best = [0.5f32, -0.5, 1.0, -1.0, 1.5, -1.5, 2.0, -2.0, 2.6, -2.6, std::f32::consts::PI]
+                .into_iter()
+                .find(|o| place(dir(c.yaw + o)).1 >= c.distance * 0.8);
+            if let Some(o) = best {
+                c.yaw += o.signum() * o.abs().min(2.5 * dt);
+            }
         }
     }
     c.current = if want < c.current { want } else { c.current + (want - c.current) * (dt * 3.0).min(1.0) };
