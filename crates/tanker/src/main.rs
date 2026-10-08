@@ -165,6 +165,7 @@ struct Cast {
     props: Vec<Prop>,
     /// Item boxes and their model.
     items: Vec<(items::Item, usize)>,
+    sliding: Vec<(Prop, SlidingDoor)>,
 }
 
 /// A static model placed by the script: `chara 0x7a8ec1` (scenery such as
@@ -177,6 +178,69 @@ struct Prop {
 }
 
 const PROP_ACTORS: &[u32] = &[0x7A8EC1, 0xD1279A, 0xCBA568];
+const SLIDING_DOOR: u32 = 0x55B942;
+
+/// Deck doors: `-k door handle -p x y z -r rx ry rz`, both models drawn in
+/// place (they are not animated yet; opening one runs its exit at once).
+fn door_props(s: &gcl::Spawn, data: &StageData) -> Vec<Prop> {
+    let v = |l: u8, i: usize| s.opt_int(l, i).unwrap_or(0) as f32;
+    let angle = |i| v(b'r', i) / 4096.0 * std::f32::consts::TAU;
+    let transform = Transform {
+        translation: Vec3::new(v(b'p', 0), v(b'p', 1), v(b'p', 2)) * SCALE,
+        rotation: Quat::from_euler(EulerRot::YXZ, angle(1), angle(0), angle(2)),
+        scale: Vec3::ONE,
+    };
+    s.opt(b'k')
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|m| {
+            let hash = m.int()? as u32 & 0x00FF_FFFF;
+            let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == hash)?;
+            Some(Prop { model, transform })
+        })
+        .collect()
+}
+
+/// A sliding door (`chara 0x55b942 -m model -d rx ry rz -p x y z -s width`):
+/// opens sideways when someone comes near.
+#[derive(Component)]
+pub struct SlidingDoor {
+    closed: Transform,
+    /// Local slide direction times the width (metres).
+    slide: Vec3,
+    /// 0 closed .. 1 open.
+    open: f32,
+}
+
+fn sliding_door(s: &gcl::Spawn, data: &StageData) -> Option<(Prop, SlidingDoor)> {
+    let hash = s.opt(b'm')?.first()?.int()? as u32 & 0x00FF_FFFF;
+    let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == hash)?;
+    let v = |l: u8, i: usize| s.opt_int(l, i).unwrap_or(0) as f32;
+    let angle = |i| v(b'd', i) / 4096.0 * std::f32::consts::TAU;
+    let transform = Transform {
+        translation: Vec3::new(v(b'p', 0), v(b'p', 1), v(b'p', 2)) * SCALE,
+        rotation: Quat::from_euler(EulerRot::YXZ, angle(1), angle(0), angle(2)),
+        scale: Vec3::ONE,
+    };
+    let width = s.opt_int(b's', 0).filter(|w| *w > 0).unwrap_or(1000) as f32 * SCALE;
+    Some((Prop { model, transform }, SlidingDoor { closed: transform, slide: transform.rotation * Vec3::X * width, open: 0.0 }))
+}
+
+/// Sliding doors open for anyone within 2 m and close again after.
+fn slide_doors(
+    time: Res<Time>,
+    bodies: Query<&Body, Without<SlidingDoor>>,
+    mut doors: Query<(&mut SlidingDoor, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    for (mut d, mut t) in &mut doors {
+        let at = d.closed.translation / SCALE;
+        let near = bodies.iter().any(|b| Vec2::new(b.pos.x - at.x, b.pos.z - at.z).length() < 2000.0 && (b.pos.y - at.y).abs() < 1500.0);
+        let step = if near { dt * 2.5 } else { -dt * 2.5 };
+        d.open = (d.open + step).clamp(0.0, 1.0);
+        t.translation = d.closed.translation + d.slide * d.open;
+    }
+}
 
 fn prop(s: &gcl::Spawn, data: &StageData) -> Option<Prop> {
     // `-f` bit 0x100 marks helpers that are never drawn (e.g. the stretched
@@ -274,6 +338,7 @@ fn prepare(
     let mut traps = Vec::new();
     let mut props = Vec::new();
     let mut items = Vec::new();
+    let mut sliding = Vec::new();
     let mut banks_after = banks.clone();
     // Snake's start: the player actor's `-p x y z -d dir`, which read the
     // start variables; else the start variables themselves.
@@ -315,6 +380,8 @@ fn prepare(
         phase = Phase::from_manager(vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR));
         traps = vm.traps.iter().map(|t| (t.clone(), false)).collect();
         props = vm.spawns.iter().filter(|s| PROP_ACTORS.contains(&s.kind)).filter_map(|s| prop(s, &data)).collect();
+        props.extend(vm.spawns.iter().filter(|s| s.kind == DOOR_ACTOR).flat_map(|s| door_props(s, &data)));
+        sliding = vm.spawns.iter().filter(|s| s.kind == SLIDING_DOOR).filter_map(|s| sliding_door(s, &data)).collect();
         items = vm
             .spawns
             .iter()
@@ -366,7 +433,7 @@ fn prepare(
     } else {
         game.entrance_done();
     }
-    Ok(Level { game, phase, cast: Cast { snake, guards, props, items } })
+    Ok(Level { game, phase, cast: Cast { snake, guards, props, items, sliding } })
 }
 
 fn main() -> Result<()> {
@@ -458,6 +525,7 @@ fn main() -> Result<()> {
             toggles,
             doors,
             traps,
+            slide_doors,
             draw_collision,
             guard::draw,
             bullet::draw,
@@ -537,6 +605,11 @@ fn spawn_level(
         let model = &data.models[p.model].1;
         let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
         commands.entity(e).insert(p.transform);
+    }
+    for (p, door) in cast.sliding {
+        let model = &data.models[p.model].1;
+        let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        commands.entity(e).insert((p.transform, door));
     }
     for (item, model) in cast.items {
         if inventory.taken.contains(&(data.name.clone(), item.name)) {
