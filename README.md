@@ -1,4 +1,4 @@
-# mgs2-tanker
+﻿# mgs2-tanker
 
 A reverse-engineering project to rebuild the Tanker chapter of
 *Metal Gear Solid 2: Sons of Liberty* (PS2, NTSC-U, SLUS-201.44) in Rust on
@@ -55,14 +55,23 @@ too.
 | W A S D | run (camera-relative) |
 | Shift | walk |
 | C | crouch |
+| Space | action: open doors (stage exits load the next stage) |
+| Enter | continue after a game over |
 | Q / E, right mouse drag | turn the camera |
 | F1 | collision, plus patrol routes |
 | F2 | guard vision cones |
 
 Testing hooks: `--auto-walk <seconds>` holds forward, `--cam-yaw/--cam-dist/
 --cam-pitch`, `--follow-guard N`, `--trace` (guard states every second),
-`--spawns` (every actor the script creates), `--screenshot out.png
---shot-at <seconds>`.
+`--spawns` (every actor the script creates), `--snake-at=x,y,z` (mm),
+`--use-door N --door-at <seconds>` (open a door without walking there),
+`--screenshot out.png --shot-at <seconds>`.
+
+Guards see, investigate, raise the alert, chase along the navigation graph
+and shoot (aim, bursts, reloads as in the game's code); Snake's life follows
+the difficulty (200/150/100/75/50). Doors run the stage script's own exit
+procs, so walking through a deck door loads the next stage with Snake where
+the script puts him. Difficulty settings come from the title screen's script.
 
 ## Viewer
 
@@ -108,7 +117,10 @@ Other options: `--collision`, `--lit`, `--browse <index>`,
 5. Gameplay: in progress
    - done: motion decoding (joint rotations, root height), Snake spawned
      from script entry points, run/walk/crouch with collision, stairs, GCL
-     interpreter for stage setup, guards with routes, vision and alert/evasion
-   - next: guard AI from the game's own routines (pathfinding, shooting,
-     reinforcements), items/weapons, triggers and stage transitions, camera,
-     cutscenes and Codec
+     interpreter for stage setup, guards with routes, guard AI ported from
+     the game (perception, suspicion meter, discovery, alert, evasion,
+     caution, shooting), Snake's life and game over, door transitions
+     between stages, an obstacle-aware camera
+   - next: items/weapons (pickups, M9, holding up guards), traps
+     (script area triggers), reinforcements and radio reports, cutscenes
+     and Codec
