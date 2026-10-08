@@ -64,6 +64,7 @@ too.
 | Q / E, right mouse drag | turn the camera |
 | F1 | collision, plus patrol routes |
 | F2 | guard vision cones |
+| F3 | stage cameras on/off |
 
 Testing hooks: `--auto-walk <seconds>` holds forward (`--walk-from`),
 `--cam-yaw/--cam-dist/--cam-pitch`, `--follow-guard N`, `--trace` (guard
@@ -86,7 +87,10 @@ What works:
   door or into an exit area loads the next stage with Snake where the
   script puts him (after his walk-in). Difficulty settings come from the
   title screen's script.
-- The camera follows Snake and keeps walls, decks and ceilings out of the way.
+- The stage scripts' own cameras (follow-in-box and fixed, switched by traps)
+  frame each area as in the game, with faces culled the way the PS2 does so
+  ceilings drop away under overhead views; elsewhere (or with F3) a follow
+  camera keeps walls and decks out of the way.
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range.
