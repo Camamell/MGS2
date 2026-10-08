@@ -210,6 +210,18 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   0x2000ab08) do not land on clip starts (0x3b4 is inside the clip at
   sector 909), so their mapping is still open.
 
+- Codec voices: a record's `#01e658 <id> { ... }` id is `0x20000000 +
+  sector` of a VOX.DAT clip (checked for several record-125 lines).
+- Audio header (kind 1, 0x20 bytes): big-endian u32 total ADPCM bytes
+  (matches the data chunks exactly), `00 7f`, big-endian u16 rate field
+  (VOX 0xac44 = 44100, DEMO 0xbb50 = 48000), a channel byte (VOX 1 or 2,
+  DEMO 2). Data are 16 KiB SPU-ADPCM chunks (`29 02 ...` blocks).
+- Open: the playback rate. The data do not fit the header rate: d01t's
+  audio runs linearly over its 16995 packet frames at about 33.5k
+  samples/s in total (16.8 kHz per channel if stereo), and a mono Codec
+  line's loudness best matches its lip-sync chunks (kind 5) at about
+  9.5 kHz. The stereo interleave is unknown too. No audio is played yet.
+
 ## DEMO.DAT (cutscenes): subtitles only
 
 - Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i`
