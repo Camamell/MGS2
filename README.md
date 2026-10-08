@@ -94,8 +94,9 @@ What works:
   ceilings drop away under overhead views; elsewhere (or with F3) a follow
   camera keeps walls and decks out of the way.
 
-- Olga on the navigational deck (w00b) as a simplified stand-in fight (her
-  real step-table AI is located but not ported; see `re/notes/guard-ai.md`).
+- Olga on the navigational deck (w00b): her original step tables are run
+  from the disc (aim, burst timings, reloads, moving between her positions);
+  only the choice of the next sequence is simplified (`re/notes/guard-ai.md`).
 - Codec calls (K) with the original dialogue; hanging from railings.
 - Cutscenes show their subtitles (the scenes themselves are not decoded yet;
   `--skip-cutscenes`), and exits through a cutscene continue to the stage it

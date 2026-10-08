@@ -434,11 +434,6 @@ fn prepare(
             .filter_map(|(m, a, mut p, yaw)| {
                 let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == m)?;
                 let motions = data.motions.iter().position(|(h, _)| *h & 0x00FF_FFFF == a);
-                // Her scripted spot is an intro position on top of a wall;
-                // the stand-in fight uses the nearest walkable node.
-                if let Some(n) = nav.as_ref().and_then(|n| n.node_at(p - Vec3::Y * 1000.0).map(|i| n.node_pos(i))) {
-                    p = n;
-                }
                 if let Some(y) = collision.as_ref().and_then(|c| c.floor_below(p.x, p.z, p.y + 100.0)) {
                     p.y = y;
                 }
@@ -756,7 +751,7 @@ fn spawn_level(
     }
     for (model, motions, pos, yaw) in cast.bosses {
         let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
-        commands.entity(e).insert(olga::Olga::new(pos));
+        commands.entity(e).insert(olga::Olga::new());
     }
     for (owner, model, when_aiming, grip) in weapons {
         let m = &data.models[model].1;

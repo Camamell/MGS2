@@ -92,7 +92,7 @@ caution).
 - the game's precomputed shortest-path matrices in the `.hzx` (paths are
   recomputed from the node links instead).
 
-## Olga (w00b): not ported yet
+## Olga (w00b): step tables run, selector simplified
 
 - Actor `chara 0x7798f6` (`-m org_def_sh_mt -a orga -p -18800 13000 -19300`),
   handler `cmd_7798f6` at 0x25EE10 in **w00b's** resident image (each stage
@@ -101,9 +101,13 @@ caution).
   step tables (0x1F6280..0x1F6400); steps advance it by 4, `FUN_00267DE0`
   picks the next sequence (partly random, with an 8-entry history at +0xF88).
   Start 0x1F6378 (`FUN_00265E70`) -> 0x1F62F0.
-- The game here uses a stand-in: cover, step out, aim, burst, duck back;
-  darts take 15 (head 30) of 100 stamina. orga.mar: 4 run, 20 aim, 24
-  crouch, 46 lying.
+- `olga.rs` reads her step tables from w00b's resident image and runs them
+  with Rust versions of the step functions (table in the module docs). Not
+  ported: the selectors and cover choice (they depend on cover objects at
+  +0x107C and Snake's zone at +0x109C); the stand-in alternates moves to her
+  positions (0x1F5D80..0x1F5E30) with the shoot sequences 0x1F6410..0x1F6530
+  and reloads (0x1F62A0) when empty. Darts take 15 (head 30) of 100 stamina
+  (not from the game). Her positions sit at y 13000, her raised platform.
 - Steps decoded so far: most call `FUN_00327BC0(motion ctl, layer, motion, ...)`
   to play an orga.mar motion, set flags at +0xF70 and advance. `FUN_002617E8`
   14 then `FUN_00261878` 15 when she has ammo (+0xFB6 > 0; aims via`

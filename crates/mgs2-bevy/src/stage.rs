@@ -62,6 +62,9 @@ pub struct StageData {
     pub motions: Vec<(u32, mar::Mar)>,
     /// The stage script (`scenerio.gcx`).
     pub script: Option<gcx::Gcx>,
+    /// The stage's resident code image (type-1 file, loaded at 0x1F1480):
+    /// some actors' data tables are read from it.
+    pub resident: Option<Vec<u8>>,
     pub warnings: Vec<String>,
 }
 
@@ -103,6 +106,7 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
         collision: None,
         motions: Vec::new(),
         script: None,
+        resident: None,
         warnings: Vec::new(),
     };
     let level = str_code(name.as_bytes());
@@ -134,6 +138,7 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
                 Ok(m) => data.motions.push((f.name_hash(), m)),
                 Err(e) => data.warnings.push(format!("{what}: {e}")),
             },
+            1 if data.resident.is_none() => data.resident = Some(bytes.to_vec()),
             6 if f.name_hash() == str_code(b"scenerio") => match gcx::parse(bytes) {
                 Ok(g) => {
                     collect_pieces(&g.main, &mut data.pieces);
