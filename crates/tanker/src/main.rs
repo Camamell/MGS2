@@ -827,6 +827,11 @@ fn script_event(
         }
         None => next,
     };
+    let mut banks = banks;
+    let next = {
+        let mut disc = session.disc.lock().unwrap();
+        skip_cutscene(&mut disc, next, &mut banks)
+    };
     info!("loading {next}");
     let level_result = {
         let mut disc = session.disc.lock().unwrap();
@@ -845,6 +850,56 @@ fn script_event(
     *game = new.game;
     commands.insert_resource(new.phase);
     commands.insert_resource(NewCast(Mutex::new(Some(new.cast))));
+}
+
+/// Cutscene stages (`d..t`) are not played yet: follow the cutscene's own
+/// exit to the next gameplay stage, with the start position and story
+/// marker its script would set.
+fn skip_cutscene(disc: &mut Disc, name: String, banks: &mut gcl::Banks) -> String {
+    let is_demo = |n: &str| n.starts_with('d') && n.ends_with('t');
+    if !is_demo(&name) {
+        return name;
+    }
+    let targets: Vec<String> = match stage::script(disc, &name) {
+        Ok(Some(g)) => {
+            let mut out = Vec::new();
+            collect_loads(&g.main, &mut out);
+            g.procs.iter().for_each(|p| collect_loads(&p.body, &mut out));
+            out
+        }
+        _ => Vec::new(),
+    };
+    for target in targets.iter().filter(|t| t.starts_with('w')) {
+        if let Ok(arrivals) = stage::arrivals(disc, &name, target) {
+            if let Some(a) = arrivals.first() {
+                set_snake_start(banks, a.entry.position, a.entry.direction);
+                if let Some(p) = a.progress {
+                    banks.set_a32(gcl::PROGRESS, p as i32);
+                }
+                info!("skipping cutscene {name} -> {target}");
+                return target.clone();
+            }
+        }
+    }
+    name
+}
+
+fn collect_loads(stmts: &[mgs2_formats::gcx::Stmt], out: &mut Vec<String>) {
+    use mgs2_formats::gcx::{Stmt, Value};
+    for s in stmts {
+        if let Stmt::Command { name, args, options } = s {
+            if *name == str_code(b"load") {
+                if let Some(Value::Str(t)) = args.first() {
+                    out.push(t.clone());
+                }
+            }
+            for v in args.iter().chain(options.iter().flat_map(|(_, v)| v)) {
+                if let Value::Block(b) = v {
+                    collect_loads(b, out);
+                }
+            }
+        }
+    }
 }
 
 /// Codec requests from a script run: the area's call (on while its trap
