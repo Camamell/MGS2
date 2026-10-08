@@ -16,6 +16,7 @@ mod guard;
 mod items;
 mod nav;
 mod olga;
+mod photo;
 mod player;
 mod script_cam;
 
@@ -93,6 +94,18 @@ struct Cli {
     /// Call the Codec (as if K were pressed) at this time (seconds).
     #[arg(long)]
     codec_at: Option<f32>,
+    /// Page through Codec calls by themselves (with --codec-at, or for
+    /// calls that open on their own).
+    #[arg(long)]
+    codec_auto: bool,
+    /// Press the action button (Space: terminals, doors with `-b`) at
+    /// these times (seconds, comma separated).
+    #[arg(long, value_delimiter = ',')]
+    press_at: Vec<f32>,
+    /// Take photos with the digital camera: `t,x,y,z,yaw,pitch;...`
+    /// (seconds, mm, degrees; yaw 0 = +z).
+    #[arg(long, allow_hyphen_values = true)]
+    shots: Option<String>,
     /// How long to aim before that shot (seconds).
     #[arg(long, default_value_t = 0.5)]
     aim_for: f32,
@@ -155,8 +168,15 @@ pub struct Game {
     pub cameras: script_cam::Cameras,
     /// (frequency, CODEC.DAT id) Snake reaches by calling from here.
     pub codec_area: Option<(i32, u32)>,
-    /// Incoming calls waiting to open.
-    pub codec_calls: Vec<(i32, u32)>,
+    /// Incoming calls waiting to open, with the proc to run after each.
+    pub codec_calls: Vec<(i32, u32, Option<u32>)>,
+    /// Procs of finished calls, to run.
+    pub codec_then: Vec<u32>,
+    /// Spoken line playing: (id, proc to run after, seconds left).
+    pub speech: Option<(u32, Option<u32>, f32)>,
+    /// Digital camera targets and the proc run after each photo.
+    pub photos: Vec<gcl::PhotoTarget>,
+    pub photo_done: Option<u32>,
     /// Ledges under railings Snake can hang from.
     pub hang_lines: Vec<collision::HangLine>,
     /// Take the trap boxes Snake starts in as already entered (a start that
@@ -387,6 +407,7 @@ fn prepare(
     let mut bosses = Vec::new();
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
+    let mut photos = (Vec::new(), None);
     let mut banks_after = banks.clone();
     // Snake's start: the player actor's `-p x y z -d dir`, which read the
     // start variables; else the start variables themselves.
@@ -467,6 +488,10 @@ fn prepare(
         }
         cameras.apply(&vm.spawns);
         codec_reqs = vm.codec.clone();
+        photos = (std::mem::take(&mut vm.photos), vm.photo_done);
+        if !photos.0.is_empty() {
+            eprintln!("{name}: {} photo targets", photos.0.len());
+        }
         banks_after = vm.banks();
     }
 
@@ -492,8 +517,15 @@ fn prepare(
         cameras,
         codec_area: None,
         codec_calls: Vec::new(),
+        codec_then: Vec::new(),
+        speech: None,
+        photos: photos.0,
+        photo_done: photos.1,
         hang_lines: Vec::new(),
     };
+    if !game.photos.is_empty() {
+        photo::init_slots(&mut game.banks);
+    }
     apply_codec(&mut game, &codec_reqs);
     if let (Some(h), Some(c)) = (&game.data.collision, &game.collision) {
         game.hang_lines = collision::hang_lines(h, c);
@@ -635,6 +667,16 @@ fn main() -> Result<()> {
     );
     app.add_systems(Update, (codec::input, codec::screen).chain().run_if(demo::idle));
     app.add_systems(Update, demo::play);
+    app.init_resource::<photo::PhotoMode>()
+        .add_systems(Startup, photo::setup_hud)
+        .add_systems(
+            Update,
+            (photo::control.before(player::control), photo::view.after(player::follow_camera), codec_followup.after(codec::input), speech)
+                .run_if(codec::idle)
+                .run_if(demo::idle),
+        )
+        .add_systems(Update, photo::hud)
+        .add_systems(Update, chapter_end.run_if(demo::idle));
     if let Some(c) = codec_data {
         app.insert_resource(c);
     }
@@ -656,8 +698,14 @@ fn main() -> Result<()> {
     if let Some(t) = cli.boss_down_at {
         app.insert_resource(olga::DownAt(t));
     }
-    if let Some(t) = cli.codec_at {
-        app.insert_resource(codec::AutoCall(t));
+    if cli.codec_at.is_some() || cli.codec_auto {
+        app.insert_resource(codec::AutoCall(cli.codec_at.unwrap_or(f32::MAX), cli.codec_auto));
+    }
+    if !cli.press_at.is_empty() {
+        app.insert_resource(AutoPress(cli.press_at.clone()));
+    }
+    if let Some(s) = &cli.shots {
+        app.insert_resource(photo::AutoShots(photo::parse_shots(s), None));
     }
     if !cli.punch_at.is_empty() {
         app.insert_resource(contact::AutoPunch(cli.punch_at.clone()));
@@ -849,10 +897,15 @@ fn script_event(
     let (load, spawns, codec, banks) = vm.finish();
     game.cameras.apply(&spawns);
     apply_codec(game, &codec);
-    let Some(next) = load else {
+    let Some(mut next) = load else {
         game.banks = banks;
         return;
     };
+    // `restart`: the same stage again, Snake placed by the variables.
+    let restart = next == gcl::RESTART;
+    if restart {
+        next = game.data.name.clone();
+    }
     let next = match next.strip_prefix('#') {
         // A hashed name: find the stage it stands for.
         Some(h) => {
@@ -870,10 +923,17 @@ fn script_event(
     if let Some(c) = cutscene.filter(|_| !session.skip_cutscenes) {
         commands.insert_resource(c);
     }
+    if is_cutscene(&next) {
+        // A cutscene that leads out of the Tanker (d12t, the chapter's end).
+        info!("{next}: end of the Tanker chapter");
+        commands.insert_resource(ChapterEnd);
+        game.banks = banks;
+        return;
+    }
     info!("loading {next}");
     let level_result = {
         let mut disc = session.disc.lock().unwrap();
-        prepare(&mut disc, &next, banks, true, session.print_spawns, session.show_vision)
+        prepare(&mut disc, &next, banks, !restart, session.print_spawns, session.show_vision)
     };
     let new = match level_result {
         Ok(l) => l,
@@ -900,8 +960,7 @@ fn skip_cutscene(
     leaving: &str,
     banks: &mut gcl::Banks,
 ) -> (String, Option<demo::Cutscene>) {
-    let is_demo = |n: &str| n.starts_with('d') && n.ends_with('t');
-    if !is_demo(&name) {
+    if !is_cutscene(&name) {
         return (name, None);
     }
     let mut cutscene = None;
@@ -928,7 +987,43 @@ fn skip_cutscene(
                 return (target.clone(), cutscene);
             }
     }
-    (name, None)
+    (name, cutscene)
+}
+
+/// Cutscene stages are named `d..t`.
+fn is_cutscene(name: &str) -> bool {
+    name.starts_with('d') && name.ends_with('t')
+}
+
+/// The chapter is over (after its last cutscene).
+#[derive(Resource)]
+struct ChapterEnd;
+
+#[derive(Component)]
+struct EndScreen;
+
+fn chapter_end(mut commands: Commands, end: Option<Res<ChapterEnd>>, shown: Query<(), With<EndScreen>>) {
+    if end.is_none() || !shown.is_empty() {
+        return;
+    }
+    commands.spawn((
+        EndScreen,
+        Text::new("TANKER CHAPTER COMPLETE\n\nThe Plant chapter is not part of this project."),
+        TextFont { font_size: bevy::text::FontSize::Px(34.0), ..default() },
+        TextColor(Color::srgb(0.9, 0.92, 0.85)),
+        TextLayout::justify(Justify::Center),
+        BackgroundColor(Color::BLACK),
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            padding: UiRect::top(percent(20)),
+            ..default()
+        },
+        GlobalZIndex(10),
+    ));
 }
 
 fn collect_loads(stmts: &[mgs2_formats::gcx::Stmt], out: &mut Vec<String>) {
@@ -983,10 +1078,12 @@ fn apply_codec(game: &mut Game, reqs: &[gcl::CodecReq]) {
             }
             CodecReq::Area { freq, id, .. } => game.codec_area = Some((freq, id)),
             CodecReq::Call { freq, id } => {
-                if !game.codec_calls.contains(&(freq, id)) {
-                    game.codec_calls.push((freq, id));
+                if !game.codec_calls.iter().any(|c| (c.0, c.1) == (freq, id)) {
+                    game.codec_calls.push((freq, id, None));
                 }
             }
+            CodecReq::Then { id, then } => game.codec_calls.push((14112, id, then)),
+            CodecReq::Speech { id, then } => game.speech = Some((id, then, SPEECH_SECONDS)),
             CodecReq::Reset => game.codec_area = None,
         }
     }
@@ -998,6 +1095,8 @@ fn apply_codec(game: &mut Game, reqs: &[gcl::CodecReq]) {
 #[allow(clippy::too_many_arguments)]
 fn traps(
     mut commands: Commands,
+    time: Res<Time>,
+    auto_press: Option<ResMut<AutoPress>>,
     keys: Res<ButtonInput<KeyCode>>,
     session: Res<Session>,
     mut game: ResMut<Game>,
@@ -1024,7 +1123,15 @@ fn traps(
         })
         .unwrap_or_default();
     let yaw = ((body.yaw / std::f32::consts::TAU * 4096.0).round() as i32) & 0xFFF;
-    let pressed = keys.just_pressed(KeyCode::Space);
+    let now_s = time.elapsed_secs();
+    let auto = auto_press.is_some_and(|mut a| {
+        let hit = a.0.first().is_some_and(|t| *t <= now_s);
+        if hit {
+            a.0.remove(0);
+        }
+        hit
+    });
+    let pressed = keys.just_pressed(KeyCode::Space) || auto;
     let prime = std::mem::take(&mut game.prime_traps);
     let mut events = Vec::new();
     for (i, (t, was_in)) in game.traps.iter_mut().enumerate() {
@@ -1063,6 +1170,50 @@ fn traps(
         if game.data.name != name {
             break; // a new stage replaced the traps
         }
+    }
+}
+
+/// How long a spoken line (`#7aa13a`) lasts. The voice data is not read
+/// yet, so every line gets the same time.
+const SPEECH_SECONDS: f32 = 8.0;
+
+/// Ends spoken lines after their time and runs their procs.
+fn speech(
+    mut commands: Commands,
+    time: Res<Time>,
+    session: Res<Session>,
+    mut game: ResMut<Game>,
+    level: LevelRoots,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    let Some((id, then, left)) = game.speech.as_mut() else { return };
+    *left -= time.delta_secs();
+    if *left > 0.0 {
+        return;
+    }
+    let (id, then) = (*id, *then);
+    game.speech = None;
+    if let Some(p) = then {
+        info!("speech {id:#x} over: running {p:#x}");
+        script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[0]), &level, &bullets);
+    }
+}
+
+/// `--press-at`: action button presses at these times (seconds).
+#[derive(Resource)]
+struct AutoPress(Vec<f32>);
+
+/// Runs the procs of Codec calls that have ended (`#db03a6 ... -p`).
+fn codec_followup(
+    mut commands: Commands,
+    session: Res<Session>,
+    mut game: ResMut<Game>,
+    level: LevelRoots,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    if let Some(p) = game.codec_then.pop() {
+        info!("codec call over: running {p:#x}");
+        script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[]), &level, &bullets);
     }
 }
 

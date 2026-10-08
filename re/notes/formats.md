@@ -65,8 +65,16 @@ the letter marks a handler that also runs on unload):
   `hzx.rs`).
 - Hang ledges: second-set walls with flag 0x800 run 200-250 mm below a deck
   edge under its railing (top = the deck floor); 24 in w00a.
-- Open: the rest of the second wall/floor set (ids +0x400), element flags, header table
-  B, and the precomputed shortest-path matrices.
+- Element flags (+0x14 of each wall/floor element) are masked by the
+  collision queries: `FUN_0014f230(coll, a, b, mode, wall_mask, floor_mask)`
+  (line of sight) tests only walls with `flags & mask == 0` (`FUN_0014e128`;
+  floors `FUN_0014e808`), and adds 0x40000 / 0x80000 to the masks unless
+  `mode` has 0x100 / 0x200. The w04c camera passes 0x10004, so the holds'
+  railings and RAY's walls (flags 0x337f0, 0x377f0, 0x13bc0: bit 0x10000)
+  do not block photos.
+- Open: the rest of the second wall/floor set (ids +0x400), the meaning of
+  most flag bits, header table B, and the precomputed shortest-path
+  matrices.
 
 ## gcx (GCL scripts): done (disassembly)
 
@@ -148,6 +156,37 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   the lines `#3b91eb <speaker> <?> -m str[n]`. Speakers: `0x4ab569`
   Otacon, `0x28dce6` Snake (the player actor's name). Faces (`face`,
   `#6b11d5` lip sync) and voices (VOX.DAT, the voice id) are not used yet.
+
+## The holds' photo finale (w04c)
+
+- `command #661bee -p <4 corners> -f <fill %> -R proc [-x pitch] [-y yaw]`
+  (`cmd_661bee`): a camera target, a 0x70-byte record: corners, normal
+  `(c2-c1) x (c1-c0)`, centre, fill, proc, `-x` (default 640) and `-y`
+  (default 320) angle limits in 4096ths.
+- `FUN_0031cc18` grades every target on each photo and calls its proc with
+  the grade: 0 if the camera is behind the quad or more than `-y` (yaw) /
+  `-x` (pitch) off its normal; else it projects the corners: all four on
+  screen and unblocked = 4 if the quad covers `-f`% of the screen (NDC area
+  * 25) else 3; on screen but some blocked = 2; all off screen with the
+  quad covering the whole frame = 1; partly off screen = 1 if the centre is
+  within 0.3 of the middle, else 0. Point-in-quad `FUN_0031c968`, area
+  `FUN_0031c8f0`.
+- `#ec40c7 -n <actor> -j <joint> -f <fill> -p proc`: a character target
+  (a marine's head), graded 1/0 from the joint's box. Not modelled yet.
+- The procs map grades to codes (10 front, 20 front-right, 30 front-left,
+  40 "MARINES" lettering, 50-120 poorer RAY shots, 130 a marine, 170 the
+  commandant) and keep the lowest in As16:0x50; `#8b12d1 -p` (after each
+  photo) stores it in the album As16:0x52[Au32:0x4c] (10000 = empty).
+- The terminal (trap #8bc63b with the action button) plays CODEC.DAT
+  record 125 through `#db03a6 -c 0x0e046d22 -p #c78b20`: Otacon goes through
+  the album (`#89a17e { ... }` repeats while its block returns non-zero),
+  sets Abit:0x3c.5/.3/.4/.6 for codes 10/20/30/40 and, with all four,
+  Abit:0x62.2. `#c78b20` then restarts the stage with marker #9d2cb1, whose
+  path plays the speech's last line (`#7aa13a 0x2000a808 -p #603f27`) and
+  loads d12t; otherwise it empties the album to try again.
+- `#7aa13a <id> -p proc`: a spoken line (ids 0x2000xxxx, not Codec); the
+  commandant's speech is a chain of these, each proc picking the next, and
+  its end is the time limit.
 
 ## DEMO.DAT (cutscenes): subtitles only
 

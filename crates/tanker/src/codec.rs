@@ -68,6 +68,8 @@ pub struct Call {
     pub freq: i32,
     pub lines: Vec<(u32, String)>,
     pub index: usize,
+    /// Script proc to run when the call ends.
+    pub then: Option<u32>,
 }
 
 #[derive(Resource, Default)]
@@ -101,20 +103,28 @@ pub fn setup_screen(mut commands: Commands) {
     ));
 }
 
-fn open(game: &mut Game, data: &CodecData, freq: i32, id: u32) -> Option<Call> {
-    let record = data.record(id)?;
+fn open(game: &mut Game, data: &CodecData, freq: i32, id: u32, then: Option<u32>) -> Option<Call> {
+    let Some(record) = data.record(id) else {
+        game.codec_then.extend(then);
+        return None;
+    };
     let banks = std::mem::replace(&mut game.banks, Banks { a: Vec::new(), b: Vec::new() });
     let (lines, banks) = play(&record, banks);
     game.banks = banks;
     for (who, l) in &lines {
         info!("codec {}: {}", speaker(*who), l.replace('\n', " "));
     }
-    (!lines.is_empty()).then_some(Call { freq, lines, index: 0 })
+    if lines.is_empty() {
+        game.codec_then.extend(then);
+        return None;
+    }
+    Some(Call { freq, lines, index: 0, then })
 }
 
-/// `--codec-at`: press K at this time (seconds) for automated tests.
+/// `--codec-at`: press K at this time (seconds) for automated tests; the
+/// flag also pages through every call by itself (`--codec-auto`).
 #[derive(Resource)]
-pub struct AutoCall(pub f32);
+pub struct AutoCall(pub f32, pub bool);
 
 pub fn input(
     time: Res<Time<Real>>,
@@ -126,24 +136,29 @@ pub fn input(
 ) {
     let Some(data) = data else { return };
     if let Some(call) = state.call.as_mut() {
-        if keys.just_pressed(KeyCode::Escape) {
-            state.call = None;
-        } else if keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) {
+        let auto_next = auto.as_ref().is_some_and(|a| a.1);
+        let end = if keys.just_pressed(KeyCode::Escape) {
+            true
+        } else if keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) || auto_next {
             call.index += 1;
-            if call.index >= call.lines.len() {
-                state.call = None;
-            }
+            call.index >= call.lines.len()
+        } else {
+            false
+        };
+        if end {
+            game.codec_then.extend(call.then);
+            state.call = None;
         }
         return;
     }
-    if let Some((freq, id)) = game.codec_calls.pop() {
-        state.call = open(&mut game, &data, freq, id);
+    if let Some((freq, id, then)) = game.codec_calls.pop() {
+        state.call = open(&mut game, &data, freq, id, then);
     } else if keys.just_pressed(KeyCode::KeyK) || auto.is_some_and(|mut a| a.0 <= time.elapsed_secs() && { a.0 = f32::MAX; true }) {
         let call = match game.codec_area {
-            Some((freq, id)) => open(&mut game, &data, freq, id),
+            Some((freq, id)) => open(&mut game, &data, freq, id, None),
             None => None,
         };
-        state.call = Some(call.unwrap_or(Call { freq: 14112, lines: vec![(0, "(no answer)".into())], index: 0 }));
+        state.call = Some(call.unwrap_or(Call { freq: 14112, lines: vec![(0, "(no answer)".into())], index: 0, then: None }));
     }
 }
 

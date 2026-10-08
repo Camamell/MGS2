@@ -93,6 +93,45 @@ pub const SNAKE_DIR: u16 = 0x7F8;
 /// (`-p` proc), so a door's exit proc reaches its `load`.
 const EAGER: &[u32] = &[0xE22388];
 
+/// Commands that run their `-p` proc once their action is over; with
+/// `eager` it runs at once. `0x709df6`: Snake plays an action (`-m`) and
+/// then calls back (the holds' terminal).
+const CALL_AFTER: &[u32] = &[0x709DF6];
+/// `command #c74f97 <var> <values...>`: stores the values in consecutive
+/// elements of an array variable.
+const FILL_ARRAY: u32 = 0xC74F97;
+/// `command #661bee -p <4 corners> -f <fill %> -R <proc> [-x n] [-y n]`: a
+/// target for the digital camera (w04c resident `cmd_661bee`).
+const PHOTO_TARGET: u32 = 0x661BEE;
+/// `command #8b12d1 -p <proc>`: called after each photo has been graded.
+const PHOTO_DONE: u32 = 0x8B12D1;
+/// A Codec call that runs a proc when it ends: `#db03a6 -c <id> -p <proc>`
+/// (sending photos from the holds' terminal).
+const CODEC_THEN: &[u32] = &[0xDB03A6];
+/// `#7aa13a <id> -p <proc>`: a line of spoken dialogue outside the Codec
+/// (ids 0x2000xxxx; the holds chain the commandant's speech this way, each
+/// line's proc picking the next). The proc gets 0 when the line is over.
+const SPEECH: u32 = 0x7AA13A;
+/// `#89a17e { ... }` in Codec records: repeats its block while the block
+/// returns non-zero.
+const CODEC_LOOP: u32 = 0x89A17E;
+
+/// A photo target: the camera grades how a photo shows this quad and calls
+/// `proc` with the grade (`FUN_0031cc18`, see `photo.rs`).
+#[derive(Clone, Debug)]
+pub struct PhotoTarget {
+    /// Corners (mm) in order; the normal is `(c2 - c1) x (c1 - c0)`.
+    pub corners: [[f32; 3]; 4],
+    /// `-f`: share of the screen (percent) the quad must cover.
+    pub fill: f32,
+    /// `-R`: called with the grade 0..4.
+    pub proc: u32,
+    /// `-x` / `-y`: how far (4096ths) the view may be from the quad's
+    /// normal in pitch / yaw.
+    pub pitch: i32,
+    pub yaw: i32,
+}
+
 /// The two variable banks, kept across stages like the game does.
 #[derive(Clone)]
 pub struct Banks {
@@ -123,10 +162,17 @@ pub struct Vm<'a> {
     pub codec_mode: bool,
     /// (speaker name hash, text) in order.
     pub lines: Vec<(u32, String)>,
+    /// Digital camera targets and the proc run after each photo.
+    pub photos: Vec<PhotoTarget>,
+    pub photo_done: Option<u32>,
     strings: &'a [String],
     last: i32,
     depth: u32,
+    rng: u32,
 }
+
+/// What `load` holds after `restart`: the current stage again.
+pub const RESTART: &str = "<restart>";
 
 /// The Codec command (`command #4a243a ...`) in stage scripts.
 pub const CODEC_COMMAND: u32 = 0x4A243A;
@@ -140,6 +186,10 @@ pub enum CodecReq {
     Area { event: u32, freq: i32, id: u32 },
     /// An incoming call.
     Call { freq: i32, id: u32 },
+    /// A call that runs `then` when it ends.
+    Then { id: u32, then: Option<u32> },
+    /// Spoken dialogue (not shown yet) that runs `then` when it ends.
+    Speech { id: u32, then: Option<u32> },
     Reset,
 }
 
@@ -173,10 +223,21 @@ impl<'a> Vm<'a> {
             codec: Vec::new(),
             codec_mode: false,
             lines: Vec::new(),
+            photos: Vec::new(),
+            photo_done: None,
             strings: &gcx.strings,
             last: 0,
             depth: 0,
+            rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() | 1),
         }
+    }
+
+    /// `rand n`: 0..n.
+    fn rand(&mut self, n: i32) -> i32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 17;
+        self.rng ^= self.rng << 5;
+        if n > 0 { (self.rng % n as u32) as i32 } else { 0 }
     }
 
     pub fn banks(&self) -> Banks {
@@ -332,6 +393,15 @@ impl<'a> Vm<'a> {
                 };
             }
             None
+        } else if is("restart") {
+            if self.load.is_none() {
+                self.load = Some(RESTART.to_string());
+            }
+            None
+        } else if is("rand") {
+            let n = a.first().map_or(0, |v| self.value(v, args).int().unwrap_or(0));
+            self.last = self.rand(n);
+            None
         } else if is("command") && matches!(a.first(), Some(Value::Name(CODEC_COMMAND))) {
             // `command #4a243a -o <event> <freq> <id>` (the call Snake gets on
             // this frequency here), `-c <freq> <id> <mode>` (an incoming
@@ -349,6 +419,8 @@ impl<'a> Vm<'a> {
             }
             self.last = 0;
             None
+        } else if is("command") && let Some(id) = Self::command_id(a.first()) {
+            self.special(id, a, options, args)
         } else if is("command") {
             // `command <id> <map> -s { ... }`: the setup block runs now.
             if let Some((_, v)) = options.iter().find(|(l, _)| *l == b's')
@@ -375,6 +447,15 @@ impl<'a> Vm<'a> {
                 .unwrap_or_default();
             self.lines.push((speaker, text));
             None
+        } else if self.codec_mode && name == CODEC_LOOP {
+            if let Some(Value::Block(b)) = a.first() {
+                for _ in 0..16 {
+                    if self.block(b, args).unwrap_or(0) == 0 {
+                        break;
+                    }
+                }
+            }
+            None
         } else if self.codec_mode {
             // Other Codec commands (the call itself, voice clips, ...): run
             // their blocks in order.
@@ -390,6 +471,78 @@ impl<'a> Vm<'a> {
             // mesg, trap, print, load, restart, command, ...: not yet.
             None
         }
+    }
+
+    /// The id of a `command` this VM models beyond the Codec.
+    fn command_id(v: Option<&Value>) -> Option<u32> {
+        let id = match v? {
+            Value::Name(h) => *h & 0x00FF_FFFF,
+            Value::Str(s) => str_code(s.as_bytes()),
+            _ => return None,
+        };
+        let known = CALL_AFTER.contains(&id)
+            || CODEC_THEN.contains(&id)
+            || [FILL_ARRAY, PHOTO_TARGET, PHOTO_DONE, SPEECH, str_code(b"rand")].contains(&id);
+        known.then_some(id)
+    }
+
+    fn special(&mut self, id: u32, a: &[Value], options: &[(u8, Vec<Value>)], args: &[i32]) -> Option<i32> {
+        let opt = |s: &mut Self, l: u8| -> Vec<Val> {
+            options.iter().find(|(o, _)| *o == l).map(|(_, v)| v.iter().map(|x| s.value(x, args)).collect()).unwrap_or_default()
+        };
+        let proc = |vals: &[Val]| match vals.first() {
+            Some(Val::Proc(p)) => Some(*p),
+            _ => None,
+        };
+        self.last = 0;
+        if id == str_code(b"rand") {
+            let n = a.get(1).map_or(0, |v| self.value(v, args).int().unwrap_or(0));
+            self.last = self.rand(n);
+        } else if id == FILL_ARRAY {
+            if let Some(Value::Var(var)) = a.get(1) {
+                let (b, o, _) = self.slot(var, args);
+                let size = match var.ty {
+                    1 => 2,
+                    6 | 8 | 9 => 4,
+                    _ => 1,
+                };
+                for (i, v) in a[2..].iter().enumerate() {
+                    let x = self.value(v, args).int().unwrap_or(0);
+                    let bank = if b { &mut self.bank_b } else { &mut self.bank_a };
+                    let at = o + i * size;
+                    if let Some(dst) = bank.get_mut(at..at + size) {
+                        dst.copy_from_slice(&x.to_le_bytes()[..size]);
+                    }
+                }
+            }
+        } else if id == PHOTO_TARGET {
+            let p: Vec<f32> = opt(self, b'p').iter().map(|v| v.int().unwrap_or(0) as f32).collect();
+            if p.len() >= 12
+                && let Some(pr) = proc(&opt(self, b'R'))
+            {
+                let c = |i: usize| [p[i * 3], p[i * 3 + 1], p[i * 3 + 2]];
+                let int = |s: &mut Self, l: u8, d: i32| opt(s, l).first().and_then(Val::int).unwrap_or(d);
+                let (fill, pitch, yaw) = (int(self, b'f', 0) as f32, int(self, b'x', 640), int(self, b'y', 320));
+                self.photos.push(PhotoTarget { corners: [c(0), c(1), c(2), c(3)], fill, proc: pr, pitch, yaw });
+            }
+        } else if id == PHOTO_DONE {
+            self.photo_done = proc(&opt(self, b'p'));
+        } else if CODEC_THEN.contains(&id) {
+            if let Some(cid) = opt(self, b'c').first().and_then(Val::int) {
+                let then = proc(&opt(self, b'p'));
+                self.codec.push(CodecReq::Then { id: cid as u32, then });
+            }
+        } else if id == SPEECH {
+            if let Some(sid) = a.get(1).and_then(|v| self.value(v, args).int()) {
+                let then = proc(&opt(self, b'p'));
+                self.codec.push(CodecReq::Speech { id: sid as u32, then });
+            }
+        } else if CALL_AFTER.contains(&id) && self.eager
+            && let Some(p) = proc(&opt(self, b'p'))
+        {
+            self.call(p, &[]);
+        }
+        None
     }
 
     fn value(&mut self, v: &Value, args: &[i32]) -> Val {

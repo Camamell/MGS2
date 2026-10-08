@@ -62,6 +62,7 @@ too.
 | V | punch (three in a row knock a guard out) |
 | R | equip / unequip a ration (revives Snake at zero life) |
 | K | call the Codec (141.12); Space next line, Esc hang up |
+| C (holds, w04c) | digital camera: first-person view; A/D W/S aim, Q/E zoom, F take a photo |
 | Enter | continue after a game over |
 | Q / E, right mouse drag | turn the camera |
 | F1 | collision, plus patrol routes |
@@ -73,7 +74,17 @@ Testing hooks: `--auto-walk <seconds>` holds forward (`--walk-from`),
 states every second, trap events), `--spawns` (every actor the script
 creates), `--snake-at=x,y,z` and `--snake-dir` (4096 = full turn),
 `--use-door N --door-at <seconds>`, `--fire-at <seconds>`, `--punch-at
-t1,t2,..`, `--screenshot out.png --shot-at <seconds>`.
+t1,t2,..`, `--press-at t1,..` (action button), `--codec-at <seconds>`,
+`--codec-auto` (page through calls by themselves), `--shots
+"t,x,y,z,yaw,pitch;..."` (stand there and take a photo; a seventh value of
+0 only moves Snake), `--screenshot out.png --shot-at <seconds>`.
+
+For example, the whole holds finale (four photos, the terminal, Otacon's
+review, the chapter's end):
+
+```bash
+tanker w04c --shots "2,0,-17000,-3000,180,29.6;3,9446,-17000,-6804,225,34.3;4,-9446,-17000,-6804,135,34.3;5,11250,-17000,-22375,270,47.6;6,12000,-17000,-3750,180,0,0" --press-at 7 --codec-auto --skip-cutscenes
+```
 
 What works:
 
@@ -101,9 +112,19 @@ What works:
 - Cutscenes show their subtitles (the scenes themselves are not decoded yet;
   `--skip-cutscenes`), and exits through a cutscene continue to the stage it
   leads to.
+- The holds' finale (w04c): photograph Metal Gear RAY with the digital
+  camera. Photos are graded by a port of the game's own routine against the
+  script's targets, saved to the six-photo album, and sent from the
+  terminal; Otacon's review is the original Codec record, and the stage
+  script's own callbacks restart the stage on the success path and lead to
+  the chapter's last cutscene (d12t) and an end screen.
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
-sleep and knock-out times, reload pause and fire range.
+sleep and knock-out times, reload pause and fire range. In the holds, the
+camera is always available, a photo goes to the first empty album slot (else
+over the worst one), every line of the commandant's speech lasts 8 seconds
+(the voice data is not read), the speech running out does not end the game
+yet, and the marine crowd is not shown.
 
 ## Viewer
 
@@ -153,6 +174,8 @@ Other options: `--collision`, `--lit`, `--browse <index>`,
      the game (perception, suspicion meter, discovery, alert, evasion,
      caution, shooting), Snake's life and game over, door transitions
      between stages, an obstacle-aware camera
-   - next: items/weapons (pickups, M9, holding up guards), traps
-     (script area triggers), reinforcements and radio reports, cutscenes
-     and Codec
+   - since: items and weapons, hold-ups, traps, stage cameras, Codec,
+     hanging, Olga, cutscene subtitles, the holds' photo finale: the Tanker
+     can be played from the deck to its end
+   - next: reinforcements and radio reports, Olga's sequence selector,
+     cutscene scenes, the marine crowd, voice timing

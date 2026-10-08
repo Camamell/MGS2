@@ -8,6 +8,7 @@ use bevy::math::{Vec2, Vec3};
 use mgs2_formats::hzx::Hzx;
 
 struct Floor {
+    flags: u32,
     /// XZ outline.
     outline: Vec<Vec2>,
     point: Vec3,
@@ -21,6 +22,7 @@ struct Wall {
     b: Vec2,
     bottom: f32,
     top: f32,
+    flags: u32,
 }
 
 pub struct Collision {
@@ -34,7 +36,7 @@ impl Collision {
         let mut floors = Vec::new();
         let mut walls = Vec::new();
         for g in hzx.areas.iter().flat_map(|a| &a.groups) {
-            for poly in g.floors.iter().flat_map(|f| &f.polygons) {
+            for (flags, poly) in g.floors.iter().flat_map(|f| f.polygons.iter().map(move |p| (f.flags, p))) {
                 if poly.vertices.len() < 3 || poly.normal[1] < 0.3 {
                     continue; // ceilings and steep faces
                 }
@@ -48,7 +50,7 @@ impl Collision {
                 }
                 let outline: Vec<Vec2> = v.iter().map(|p| Vec2::new(p.x, p.z)).collect();
                 let (min, max) = outline.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
-                floors.push(Floor { outline, point: v[0], normal: n, min, max });
+                floors.push(Floor { flags, outline, point: v[0], normal: n, min, max });
             }
             for w in &g.walls {
                 for pair in w.points.windows(2) {
@@ -58,6 +60,7 @@ impl Collision {
                         b: Vec2::new(b[0], b[2]),
                         bottom: a[1].min(b[1]),
                         top: (a[1] + ha).max(b[1] + hb),
+                        flags: w.flags,
                     });
                 }
             }
@@ -118,25 +121,17 @@ impl Collision {
     /// First wall or floor crossed by the segment `a`..`b`, as a fraction of
     /// its length. Floors block too, so nobody sees through a deck.
     pub fn ray(&self, a: Vec3, b: Vec3) -> Option<f32> {
+        self.ray_masked(a, b, 0, 0)
+    }
+
+    /// Line of sight as `FUN_0014f230` tests it: walls and floors whose
+    /// flags share a bit with the masks are seen through.
+    pub fn ray_masked(&self, a: Vec3, b: Vec3, wall_mask: u32, floor_mask: u32) -> Option<f32> {
         let (p, r) = (Vec2::new(a.x, a.z), Vec2::new(b.x - a.x, b.z - a.z));
-        let walls = self.walls.iter().filter_map(|w| {
-            let s = w.b - w.a;
-            let denom = r.perp_dot(s);
-            if denom.abs() < 1e-6 {
-                return None;
-            }
-            let q = w.a - p;
-            let t = q.perp_dot(s) / denom;
-            let u = q.perp_dot(r) / denom;
-            if !(0.0..=1.0).contains(&t) || !(0.0..=1.0).contains(&u) {
-                return None;
-            }
-            let y = a.y + (b.y - a.y) * t;
-            (y > w.bottom && y < w.top).then_some(t)
-        });
+        let walls = self.wall_hits(a, b).filter(|(_, f)| f & wall_mask == 0).map(|(t, _)| t).min_by(f32::total_cmp);
         let d = b - a;
         let (lo, hi) = (p.min(p + r), p.max(p + r));
-        let floors = self.floors.iter().filter_map(|f| {
+        let floors = self.floors.iter().filter(|f| f.flags & floor_mask == 0).filter_map(|f| {
             if hi.cmplt(f.min).any() || lo.cmpgt(f.max).any() {
                 return None;
             }
@@ -151,7 +146,28 @@ impl Collision {
             let h = a + d * t;
             inside(&f.outline, Vec2::new(h.x, h.z)).then_some(t)
         });
-        walls.chain(floors).min_by(f32::total_cmp)
+        walls.into_iter().chain(floors).min_by(f32::total_cmp)
+    }
+
+
+    /// Walls crossed by the segment `a`..`b`: (fraction, wall flags).
+    pub fn wall_hits(&self, a: Vec3, b: Vec3) -> impl Iterator<Item = (f32, u32)> + '_ {
+        let (p, r) = (Vec2::new(a.x, a.z), Vec2::new(b.x - a.x, b.z - a.z));
+        self.walls.iter().filter_map(move |w| {
+            let s = w.b - w.a;
+            let denom = r.perp_dot(s);
+            if denom.abs() < 1e-6 {
+                return None;
+            }
+            let q = w.a - p;
+            let t = q.perp_dot(s) / denom;
+            let u = q.perp_dot(r) / denom;
+            if !(0.0..=1.0).contains(&t) || !(0.0..=1.0).contains(&u) {
+                return None;
+            }
+            let y = a.y + (b.y - a.y) * t;
+            (y > w.bottom && y < w.top).then_some((t, w.flags))
+        })
     }
 }
 
