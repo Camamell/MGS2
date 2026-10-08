@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-bevy = "0.19.1"
+bevy = { version = "0.19.1", features = ["wav"] }
 clap.workspace = true
 mgs2-bevy = { path = "../mgs2-bevy" }
 mgs2-formats = { path = "../mgs2-formats" }

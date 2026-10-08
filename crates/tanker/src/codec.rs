@@ -20,13 +20,42 @@ use crate::gcl::{Banks, Vm};
 #[derive(Resource)]
 pub struct CodecData {
     data: Vec<u8>,
+    iso: std::path::PathBuf,
 }
 
 impl CodecData {
     pub fn load(iso: &std::path::Path) -> anyhow::Result<Self> {
         let mut data = Vec::new();
         mgs2_formats::iso::Iso::open(iso)?.open_file("MGS2/CODEC.DAT")?.read_to_end(&mut data)?;
-        Ok(Self { data })
+        Ok(Self { data, iso: iso.to_path_buf() })
+    }
+
+    /// A voice clip (`0x20000000 + sector` in VOX.DAT) as a WAV file.
+    pub fn voice(&self, id: u32) -> anyhow::Result<Vec<u8>> {
+        use std::io::{Seek, SeekFrom};
+        let mut f = mgs2_formats::iso::Iso::open(&self.iso)?.open_file("MGS2/VOX.DAT")?;
+        let mut pos = u64::from(id.wrapping_sub(0x2000_0000)) * 0x800;
+        let mut bytes = Vec::new();
+        let mut head = [0u8; 8];
+        for n in 0..4096 {
+            f.seek(SeekFrom::Start(pos))?;
+            f.read_exact(&mut head)?;
+            let kind = u32::from_le_bytes(head[..4].try_into().unwrap());
+            let size = u32::from_le_bytes(head[4..].try_into().unwrap()) as u64;
+            if !(16..=0x10_0000).contains(&size) || (kind == 0x10 && n > 2) {
+                break;
+            }
+            let mut chunk = vec![0u8; size as usize];
+            f.seek(SeekFrom::Start(pos))?;
+            f.read_exact(&mut chunk)?;
+            bytes.extend_from_slice(&chunk);
+            pos += size;
+            if kind == 0xF0 {
+                break;
+            }
+        }
+        let clip = mgs2_formats::vox::decode_clip(&bytes).ok_or_else(|| anyhow::anyhow!("no audio in voice {id:#x}"))?;
+        Ok(clip.wav())
     }
 
     /// The record a stage script's codec id points at.
@@ -46,13 +75,14 @@ impl CodecData {
 
 /// Runs a record's `main` with the current variables and returns its lines
 /// and the variables afterwards (calls set "heard" flags).
-pub fn play(record: &Gcx, banks: Banks) -> (Vec<(u32, String)>, Banks) {
+pub fn play(record: &Gcx, banks: Banks) -> (Vec<(u32, String)>, Vec<u32>, Banks) {
     let mut vm = Vm::with_banks(record, banks);
     vm.codec_mode = true;
     vm.run(&record.main);
     let lines = std::mem::take(&mut vm.lines);
+    let voices = std::mem::take(&mut vm.line_voices);
     let (_, _, _, banks) = vm.finish();
-    (lines, banks)
+    (lines, voices, banks)
 }
 
 pub fn speaker(h: u32) -> &'static str {
@@ -67,6 +97,8 @@ pub fn speaker(h: u32) -> &'static str {
 pub struct Call {
     pub freq: i32,
     pub lines: Vec<(u32, String)>,
+    /// Voice clip of each line (0 = none).
+    pub voices: Vec<u32>,
     pub index: usize,
     /// Script proc to run when the call ends.
     pub then: Option<u32>,
@@ -109,7 +141,7 @@ fn open(game: &mut Game, data: &CodecData, freq: i32, id: u32, then: Option<u32>
         return None;
     };
     let banks = std::mem::replace(&mut game.banks, Banks { a: Vec::new(), b: Vec::new() });
-    let (lines, banks) = play(&record, banks);
+    let (lines, voices, banks) = play(&record, banks);
     game.banks = banks;
     for (who, l) in &lines {
         info!("codec {}: {}", speaker(*who), l.replace('\n', " "));
@@ -118,7 +150,7 @@ fn open(game: &mut Game, data: &CodecData, freq: i32, id: u32, then: Option<u32>
         game.codec_then.extend(then);
         return None;
     }
-    Some(Call { freq, lines, index: 0, then })
+    Some(Call { freq, lines, voices, index: 0, then })
 }
 
 /// `--codec-at`: press K at this time (seconds) for automated tests; the
@@ -158,7 +190,52 @@ pub fn input(
             Some((freq, id)) => open(&mut game, &data, freq, id, None),
             None => None,
         };
-        state.call = Some(call.unwrap_or(Call { freq: 14112, lines: vec![(0, "(no answer)".into())], index: 0, then: None }));
+        state.call = Some(call.unwrap_or(Call { freq: 14112, lines: vec![(0, "(no answer)".into())], voices: vec![0], index: 0, then: None }));
+    }
+}
+
+/// The voice clip playing in the Codec.
+#[derive(Component)]
+pub struct CodecVoice;
+
+/// Plays the voice clip of the line on screen (each clip covers a run of
+/// lines) and stops it when the call ends.
+pub fn voice(
+    mut commands: Commands,
+    state: Res<CodecState>,
+    data: Option<Res<CodecData>>,
+    mut sources: ResMut<Assets<AudioSource>>,
+    playing: Query<Entity, With<CodecVoice>>,
+    mut started: Local<Option<u32>>,
+) {
+    let stop = |commands: &mut Commands| {
+        for e in &playing {
+            commands.entity(e).despawn();
+        }
+    };
+    if state.call.is_none() {
+        if started.take().is_some() {
+            stop(&mut commands);
+        }
+        return;
+    }
+    // A clip covers a run of lines: it starts with the first of them and
+    // plays on (or ends by itself) while the others are shown.
+    let want = state.call.as_ref().and_then(|c| c.voices.get(c.index).copied()).filter(|v| *v != 0);
+    if want.is_none() || want == *started {
+        return;
+    }
+    stop(&mut commands);
+    *started = want;
+    let (Some(id), Some(data)) = (want, data) else { return };
+    match data.voice(id) {
+        Ok(wav) => {
+            let secs = (wav.len() - 44) as f32 / (mgs2_formats::vox::RATE as f32 * 2.0 * f32::from(u16::from_le_bytes([wav[22], wav[23]])));
+            info!("codec voice {id:#x}: {secs:.1} s");
+            let handle = sources.add(AudioSource { bytes: wav.into() });
+            commands.spawn((AudioPlayer(handle), PlaybackSettings::DESPAWN, CodecVoice));
+        }
+        Err(e) => warn!("codec voice {id:#x}: {e:#}"),
     }
 }
 

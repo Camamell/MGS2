@@ -748,7 +748,7 @@ fn main() -> Result<()> {
             .run_if(codec::idle)
             .run_if(demo::idle),
     );
-    app.add_systems(Update, (codec::input, codec::screen).chain().run_if(demo::idle));
+    app.add_systems(Update, (codec::input, codec::screen, codec::voice).chain().run_if(demo::idle));
     app.add_systems(Update, (demo::play, demo::stage, demo::animate).chain().after(player::follow_camera));
     app.init_resource::<photo::PhotoMode>()
         .add_systems(Startup, photo::setup_hud)

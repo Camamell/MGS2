@@ -15,6 +15,7 @@ pub mod mar;
 pub mod names;
 pub mod stage_dat;
 pub mod tri;
+pub mod vox;
 
 pub use cipher::{Cipher, str_code};
 

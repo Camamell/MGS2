@@ -216,12 +216,19 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   (matches the data chunks exactly), `00 7f`, big-endian u16 rate field
   (VOX 0xac44 = 44100, DEMO 0xbb50 = 48000), a channel byte (VOX 1 or 2,
   DEMO 2). Data are 16 KiB SPU-ADPCM chunks (`29 02 ...` blocks).
-- Open: the playback rate. The data do not fit the header rate: d01t's
-  audio runs linearly over its 16995 packet frames at about 33.5k
-  samples/s in total (16.8 kHz per channel if stereo), and a mono Codec
-  line's loudness best matches its lip-sync chunks (kind 5) at about
-  9.5 kHz. The stereo interleave is unknown too. No audio is played yet.
-
+- Playback: SPU ADPCM, stereo clips interleave 0x800-byte blocks per
+  channel (each channel's last block carries the end flag; the two are
+  0x800 apart). The header's rate field is not the playback rate: in the
+  "caught" clip (sector 0xddaa) the three shouts' loudness lines up with
+  their subtitle spans at 9325-9400 Hz per channel whatever the
+  interleave, taken as 9375 Hz (SPU pitch 0x320); a mono Codec line's
+  loudness against its lip-sync chunks agrees (about 9.5 kHz). Decoded
+  lengths stay 6-9 s under the clips' end frames (trailing silence). Not
+  confirmed by ear. `mgs2_formats::vox` decodes clips; Codec calls play
+  their voice blocks (`#01e658 <id>`).
+- DEMO.DAT audio (kind 1, header rate 0xbb50, 2 channels) is not SPU
+  ADPCM: silence is `07 07 07 ...` and the bytes do not carry ADPCM block
+  headers. Not decoded.
 ## DEMO.DAT (cutscenes): cameras and actors decoded
 
 - Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i

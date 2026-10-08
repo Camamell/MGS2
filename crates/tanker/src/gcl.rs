@@ -166,6 +166,9 @@ pub struct Vm<'a> {
     pub codec_mode: bool,
     /// (speaker name hash, text) in order.
     pub lines: Vec<(u32, String)>,
+    /// The voice clip (VOX.DAT id) each line belongs to.
+    pub line_voices: Vec<u32>,
+    voice: u32,
     /// Digital camera targets and the proc run after each photo.
     pub photos: Vec<PhotoTarget>,
     pub photo_done: Option<u32>,
@@ -187,6 +190,8 @@ const WHEN_FREE: u32 = 0x635875;
 pub const CODEC_COMMAND: u32 = 0x4A243A;
 /// A line of Codec dialogue.
 const CODEC_LINE: u32 = 0x3B91EB;
+/// `#01e658 <voice id> { lines }`: the lines spoken in one VOX.DAT clip.
+const CODEC_VOICE: u32 = 0x01E658;
 
 #[derive(Clone, Copy, Debug)]
 pub enum CodecReq {
@@ -232,6 +237,8 @@ impl<'a> Vm<'a> {
             codec: Vec::new(),
             codec_mode: false,
             lines: Vec::new(),
+            line_voices: Vec::new(),
+            voice: 0,
             photos: Vec::new(),
             photo_done: None,
             strings: &gcx.strings,
@@ -460,6 +467,19 @@ impl<'a> Vm<'a> {
                 })
                 .unwrap_or_default();
             self.lines.push((speaker, text));
+            self.line_voices.push(self.voice);
+            None
+        } else if self.codec_mode && name == CODEC_VOICE {
+            self.voice = a.first().map_or(0, |v| self.value(v, args).int().unwrap_or(0)) as u32;
+            for v in a.iter().skip(1).chain(options.iter().flat_map(|(_, v)| v)) {
+                if let Value::Block(b) = v
+                    && let Some(r) = self.block(b, args)
+                {
+                    self.voice = 0;
+                    return Some(r);
+                }
+            }
+            self.voice = 0;
             None
         } else if self.codec_mode && name == CODEC_LOOP {
             if let Some(Value::Block(b)) = a.first() {

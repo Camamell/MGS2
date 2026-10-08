@@ -110,7 +110,9 @@ What works:
 - Olga on the navigational deck (w00b): her original step tables are run
   from the disc (aim, burst timings, reloads, moving between her positions);
   only the choice of the next sequence is simplified (`re/notes/guard-ai.md`).
-- Codec calls (K) with the original dialogue; hanging from railings.
+- Codec calls (K) with the original dialogue and voices (VOX.DAT; the
+  9375 Hz playback rate is inferred, see `re/notes/formats.md`); hanging
+  from railings.
 - Cutscenes play from DEMO.DAT: the camera track, the characters posed by
   the demo's actor stream, the cutscene stage's scenery, and subtitles
   (`--skip-cutscenes` to skip; Space next line, Esc skip), with the
