@@ -30,6 +30,24 @@ pub fn pose(model: &kms::Model, motion: Option<&Motion>, frame: f32, conjugate: 
     out
 }
 
+/// Model-space matrices from explicit joint rotations (a cutscene's actor
+/// stream): joint i turns object i; `root`, if given, replaces the root
+/// object's offset (the hips' position).
+pub fn pose_joints(model: &kms::Model, rotations: &[Quat], root: Option<Vec3>) -> Vec<Affine3A> {
+    let mut out: Vec<Affine3A> = Vec::with_capacity(model.objects.len());
+    for (i, o) in model.objects.iter().enumerate() {
+        let rot = rotations.get(i).copied().unwrap_or(Quat::IDENTITY);
+        let mut offset = Vec3::from(o.offset);
+        if o.parent < 0 {
+            offset = root.unwrap_or(offset + Vec3::from(model.origin));
+        }
+        let local = Affine3A::from_rotation_translation(rot, offset);
+        let parent = usize::try_from(o.parent).ok().and_then(|p| out.get(p).copied()).unwrap_or(Affine3A::IDENTITY);
+        out.push(parent * local);
+    }
+    out
+}
+
 /// Skinned positions (millimetres) and normals of one mesh:
 /// `w * M_self * v + (1 - w) * M_parent * (v + offset_self)`.
 pub fn skin(model: &kms::Model, obj: usize, mesh: usize, mats: &[Affine3A]) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {

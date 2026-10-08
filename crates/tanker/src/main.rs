@@ -661,7 +661,7 @@ fn main() -> Result<()> {
     let skip_cutscenes = cli.skip_cutscenes || (cli.screenshot.is_some() && !cli.cutscenes);
     let opening = match from.as_deref() {
         Some(f) if f.starts_with('d') && f.ends_with('t') && !skip_cutscenes => {
-            stage::script(&mut disc, f)?.map(|g| demo::load(&iso, f, &g))
+            stage::script(&mut disc, f)?.map(|g| demo::load(&iso, f, &g, stage::load(&mut disc, f).ok()))
         }
         _ => None,
     };
@@ -743,7 +743,7 @@ fn main() -> Result<()> {
             .run_if(demo::idle),
     );
     app.add_systems(Update, (codec::input, codec::screen).chain().run_if(demo::idle));
-    app.add_systems(Update, demo::play);
+    app.add_systems(Update, (demo::play, demo::stage, demo::animate).chain().after(player::follow_camera));
     app.init_resource::<photo::PhotoMode>()
         .add_systems(Startup, photo::setup_hud)
         .add_systems(
@@ -1011,7 +1011,10 @@ fn script_event(
         let mut disc = session.disc.lock().unwrap();
         skip_cutscene(&mut disc, &session.iso, next, &game.data.name, &mut banks)
     };
-    if let Some(c) = cutscene.filter(|_| !session.skip_cutscenes) {
+    if let Some(mut c) = cutscene.filter(|_| !session.skip_cutscenes) {
+        // The level the cutscene was reached from stays behind its actors.
+        let mut disc = session.disc.lock().unwrap();
+        c.backdrop = stage::load(&mut disc, &game.data.name).ok();
         commands.insert_resource(c);
     }
     if is_cutscene(&next) {
@@ -1057,7 +1060,7 @@ fn skip_cutscene(
     let mut cutscene = None;
     let targets: Vec<String> = match stage::script(disc, &name) {
         Ok(Some(g)) => {
-            cutscene = Some(demo::load(iso, &name, &g));
+            cutscene = Some(demo::load(iso, &name, &g, stage::load(disc, &name).ok()));
             let mut out = Vec::new();
             collect_loads(&g.main, &mut out);
             g.procs.iter().for_each(|p| collect_loads(&p.body, &mut out));

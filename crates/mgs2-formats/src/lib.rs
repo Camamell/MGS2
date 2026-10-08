@@ -4,6 +4,7 @@
 //! `re/notes` directory records which game function each piece came from.
 
 pub mod cipher;
+pub mod demo;
 pub mod gcx;
 pub mod gs;
 pub mod hzx;
