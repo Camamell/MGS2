@@ -19,11 +19,14 @@ use crate::player::Player;
 
 pub const OLGA_ACTOR: u32 = 0x7798F6;
 
-/// orga.mar motions picked from a contact sheet.
+/// orga.mar motions: aim 14 / fire 15 / run 4 / down 46 as her steps use them
+/// (`FUN_002617E8`, `FUN_00261878`, `FUN_00260A10`, `FUN_002661E0`); the
+/// crouch behind cover (24) is picked from a contact sheet.
 mod motion {
     pub const COVER: usize = 24;
     pub const RUN: usize = 4;
-    pub const AIM: usize = 20;
+    pub const AIM: usize = 14;
+    pub const FIRE: usize = 15;
     pub const DOWN: usize = 46;
 }
 
@@ -125,7 +128,7 @@ pub fn think(
                 }
             }
             OlgaState::Fire { shots, cool } => {
-                b.play(motion::AIM);
+                b.play(motion::FIRE);
                 b.yaw = turn_toward(b.yaw, face, 6.0 * dt);
                 if cool - frames > 0.0 {
                     OlgaState::Fire { shots, cool: cool - frames }
