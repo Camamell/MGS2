@@ -313,7 +313,7 @@ pub fn control(
     let into = free.unwrap_or_else(|| (0..SLOTS).max_by_key(|&i| slot(banks, i)).unwrap_or(0));
     banks.set_a32(SLOT, into as i32);
     banks.a[BEST..BEST + 2].copy_from_slice(&1000i16.to_le_bytes());
-    for (i, v) in [body.pos.x, body.pos.y, body.pos.z].into_iter().enumerate() {
+    for (i, v) in [body.pos.x, body.pos.y + p.height() * 0.5, body.pos.z].into_iter().enumerate() {
         let o = SNAKE_POS as usize + i * 4;
         banks.b[o..o + 4].copy_from_slice(&(v as i32).to_le_bytes());
     }

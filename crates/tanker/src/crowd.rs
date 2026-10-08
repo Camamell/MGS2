@@ -92,6 +92,26 @@ pub fn walkers(s: &Spawn) -> Vec<usize> {
         .collect()
 }
 
+/// The `-e` procs (by event: 0 a button, 1 and 2 Snake near the `-p`
+/// points, 3 a Marine heard something, 4 a Marine saw Snake, ...) and the
+/// sight `-t near far`.
+pub fn events(s: &Spawn) -> (Vec<Option<u32>>, (f32, f32)) {
+    let procs = s
+        .opt(b'e')
+        .unwrap_or(&[])
+        .iter()
+        .map(|v| match v {
+            Val::Proc(p) => Some(*p),
+            _ => None,
+        })
+        .collect();
+    let t = |i| s.opt_int(b't', i).map(|v| v as f32);
+    (procs, (t(0).unwrap_or(2500.0), t(1).unwrap_or(7000.0)))
+}
+
+/// Event index for "a Marine saw Snake" (`FUN_00224b80`, state bit 0x80).
+pub const SAW_SNAKE: usize = 4;
+
 /// Parts per entry of the variant table (`us_def_1` has 21 objects).
 const PARTS: usize = 21;
 /// Variants built from parts (the table has 18 per level of detail).

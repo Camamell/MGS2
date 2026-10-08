@@ -90,10 +90,12 @@ pub const SNAKE_Y: u16 = 0x7F4;
 pub const SNAKE_Z: u16 = 0xC0;
 pub const SNAKE_DIR: u16 = 0x7F8;
 
-/// Actors that run their callback right away when the VM runs a stage
-/// exit (`eager`): `delay` timers (`-e` block) and the fade-out `0xe22388`
-/// (`-p` proc), so a door's exit proc reaches its `load`.
-const EAGER: &[u32] = &[0xE22388];
+/// Actors that run their `-p` callback right away when the VM runs an
+/// event (`eager`): the fade-out `0xe22388` and `delay` timers
+/// (`0x743c9f`), so a door's exit proc reaches its `load` and the holds'
+/// "caught" sequence its game over. (A `delay`'s `-e` block always runs at
+/// once.)
+const EAGER: &[u32] = &[0xE22388, 0x743C9F];
 
 /// Commands that run their `-p` proc once their action is over; with
 /// `eager` it runs at once. `0x709df6`: Snake plays an action (`-m`) and
@@ -175,6 +177,11 @@ pub struct Vm<'a> {
 
 /// What `load` holds after `restart`: the current stage again.
 pub const RESTART: &str = "<restart>";
+/// What `load` holds after `load <stage> -g`: game over.
+pub const GAME_OVER: &str = "<game over>";
+/// `command #635875 [-l] -e { ... }`: runs the block once nothing else is
+/// on screen (the holds' "caught" and "time up" sequences); run at once.
+const WHEN_FREE: u32 = 0x635875;
 
 /// The Codec command (`command #4a243a ...`) in stage scripts.
 pub const CODEC_COMMAND: u32 = 0x4A243A;
@@ -388,10 +395,15 @@ impl<'a> Vm<'a> {
             None
         } else if is("load") {
             if self.load.is_none() {
-                self.load = match a.first().map(|v| self.value(v, args)) {
-                    Some(Val::Str(s)) => Some(s),
-                    Some(Val::Name(h)) => Some(format!("#{h:06x}")),
-                    _ => None,
+                // `-g`: the game over scene (e.g. caught in the holds).
+                self.load = if options.iter().any(|(l, _)| *l == b'g') {
+                    Some(GAME_OVER.to_string())
+                } else {
+                    match a.first().map(|v| self.value(v, args)) {
+                        Some(Val::Str(s)) => Some(s),
+                        Some(Val::Name(h)) => Some(format!("#{h:06x}")),
+                        _ => None,
+                    }
                 };
             }
             None
@@ -484,7 +496,7 @@ impl<'a> Vm<'a> {
         };
         let known = CALL_AFTER.contains(&id)
             || CODEC_THEN.contains(&id)
-            || [FILL_ARRAY, PHOTO_TARGET, PHOTO_DONE, SPEECH, str_code(b"rand")].contains(&id);
+            || [FILL_ARRAY, PHOTO_TARGET, PHOTO_DONE, SPEECH, WHEN_FREE, str_code(b"rand")].contains(&id);
         known.then_some(id)
     }
 
@@ -526,6 +538,13 @@ impl<'a> Vm<'a> {
                 let int = |s: &mut Self, l: u8, d: i32| opt(s, l).first().and_then(Val::int).unwrap_or(d);
                 let (fill, pitch, yaw) = (int(self, b'f', 0) as f32, int(self, b'x', 640), int(self, b'y', 320));
                 self.photos.push(PhotoTarget { corners: [c(0), c(1), c(2), c(3)], fill, proc: pr, pitch, yaw });
+            }
+        } else if id == WHEN_FREE {
+            if self.eager
+                && let Some((_, v)) = options.iter().find(|(l, _)| *l == b'e')
+                && let Some(Value::Block(b)) = v.first()
+            {
+                return self.block(b, args);
             }
         } else if id == PHOTO_DONE {
             self.photo_done = proc(&opt(self, b'p'));

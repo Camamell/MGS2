@@ -122,6 +122,8 @@ What works:
   the chapter's last cutscene (d12t) and an end screen. The Marines stand
   in formation where the script places them (`re/notes/formats.md`), and
   the Marines on watch in the holds use the guard AI with their own motions.
+  A Marine in formation who sees Snake starts the script's own "caught"
+  sequence, which ends the game.
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range. In the holds, the

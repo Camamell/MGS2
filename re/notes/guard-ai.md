@@ -111,8 +111,17 @@ members placed at `0 0 n` keep watch on route `n` (in w04a routes 4 and 6
 are single-point posts; Hard adds route 2). Their archive `ushold.mar` has
 the soldiers' speeds (walk 39: 2109 mm / 95 frames, run 40: 2164 mm / 32
 frames), hands up 46, fall 151, lie 152. The port runs them with the
-soldiers' AI and these motions (`guard::Anim::MARINE`); the crowd's own
-perception (`-t 2500 7000`) and reactions are not ported.
+soldiers' AI and these motions (`guard::Anim::MARINE`).
+
+The crowd actor's `-e` procs are its events (offsets from +0x8c8ac): 0 a
+pad flag, 1 / 2 Snake near the `-p` points facing them, 3 a Marine heard
+something (`FUN_00224a58`), 4 a Marine saw Snake (`FUN_00224b80`, member
+state bit 0x80; the proc gets his position), 5..9 further states (bits
+0x10 / 0x1000 / 0x2000, flags 0x400 / 0x800). Each pointer is cleared once
+called. In w04a event 4 is `#0b6271`: the "caught" sequence, which ends in
+`load "d14t" -g` (game over). The port fires event 4 when a Marine in
+formation sees Snake (within `-t` near, or far while Snake stands; ±0x200
+of his facing; clear line); the members' own state machine is not ported.
 
 ## Not yet ported
 

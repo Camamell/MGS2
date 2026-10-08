@@ -179,6 +179,16 @@ pub struct Game {
     pub on_alert: Option<u32>,
     /// Troopers on their way: (spawn, seconds until they arrive).
     pub arrivals: Vec<(gcl::Spawn, f32)>,
+    /// The script ended the game (`load ... -g`).
+    pub game_over: bool,
+    /// The variables as the stage started (a continue goes back to them).
+    pub start_banks: gcl::Banks,
+    /// The crowd's "saw Snake" event has fired.
+    pub crowd_alarm: bool,
+    /// The crowd actor's `-e` procs (events of the Marines in formation)
+    /// and its sight `-t near far` (mm).
+    pub crowd_procs: Vec<Option<u32>>,
+    pub crowd_sight: (f32, f32),
     /// Spoken line playing: (id, proc to run after, seconds left).
     pub speech: Option<(u32, Option<u32>, f32)>,
     /// Digital camera targets and the proc run after each photo.
@@ -418,6 +428,7 @@ fn prepare(
     let mut bosses = Vec::new();
     let mut crowd = Vec::new();
     let mut on_alert = None;
+    let mut crowd_procs = (Vec::new(), (2500.0, 7000.0));
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
     let mut photos = (Vec::new(), None);
@@ -497,6 +508,9 @@ fn prepare(
                 }
             }
         }
+        if let Some(s) = vm.spawns.iter().find(|s| s.kind == crowd::CROWD_ACTOR) {
+            crowd_procs = crowd::events(s);
+        }
         let members: Vec<crowd::Member> = vm.spawns.iter().filter(|s| s.kind == crowd::CROWD_ACTOR).flat_map(crowd::members).collect();
         // Each Marine variant once, built from the part library.
         let mut variants: HashMap<i32, usize> = HashMap::new();
@@ -575,6 +589,11 @@ fn prepare(
         codec_then: Vec::new(),
         on_alert,
         arrivals: Vec::new(),
+        game_over: false,
+        start_banks: gcl::Banks::default(),
+        crowd_alarm: false,
+        crowd_procs: crowd_procs.0,
+        crowd_sight: crowd_procs.1,
         speech: None,
         photos: photos.0,
         photo_done: photos.1,
@@ -583,6 +602,7 @@ fn prepare(
     if !game.photos.is_empty() {
         photo::init_slots(&mut game.banks);
     }
+    game.start_banks = game.banks.clone();
     apply_codec(&mut game, &codec_reqs);
     if let (Some(h), Some(c)) = (&game.data.collision, &game.collision) {
         game.hang_lines = collision::hang_lines(h, c);
@@ -728,7 +748,7 @@ fn main() -> Result<()> {
         .add_systems(Startup, photo::setup_hud)
         .add_systems(
             Update,
-            (photo::control.before(player::control), photo::view.after(player::follow_camera), codec_followup.after(codec::input), speech, reinforcements.after(guard::think))
+            (photo::control.before(player::control), photo::view.after(player::follow_camera), codec_followup.after(codec::input), speech, reinforcements.after(guard::think), snake_vars, crowd_watch.after(snake_vars))
                 .run_if(codec::idle)
                 .run_if(demo::idle),
         )
@@ -966,6 +986,12 @@ fn script_event(
         game.banks = banks;
         return;
     };
+    if next == gcl::GAME_OVER {
+        info!("script: game over");
+        game.game_over = true;
+        game.banks = banks;
+        return;
+    }
     // `restart`: the same stage again, Snake placed by the variables.
     let restart = next == gcl::RESTART;
     if restart {
@@ -1363,6 +1389,63 @@ fn reinforcements(
     }
 }
 
+/// Snake's position as the scripts read it (Bu32 0xe0 / 0xe4 / 0xe8; the
+/// height is taken as his body's centre: the holds' scripts test it
+/// against the floor level -17000 and the catwalks' -9000), and a game
+/// over the script asked for.
+fn snake_vars(mut game: ResMut<Game>, mut player: Query<(&Body, &mut Player)>) {
+    let Ok((b, mut p)) = player.single_mut() else { return };
+    let centre = b.pos.y + p.height() * 0.5;
+    for (i, v) in [b.pos.x, centre, b.pos.z].into_iter().enumerate() {
+        let o = 0xE0 + i * 4;
+        game.banks.b[o..o + 4].copy_from_slice(&(v as i32).to_le_bytes());
+    }
+    if std::mem::take(&mut game.game_over) && !p.dead() {
+        p.life = 0;
+    }
+}
+
+/// The Marines in formation watching: one who sees Snake (inside `-t
+/// near`, or inside `far` while Snake stands, within ±0x200 of his
+/// facing, with a clear line) raises the crowd's "saw Snake" event with
+/// his position, once (the game clears the proc after calling it).
+fn crowd_watch(
+    mut commands: Commands,
+    session: Res<Session>,
+    mut game: ResMut<Game>,
+    marines: Query<&Body, With<crowd::Marine>>,
+    player: Query<(&Body, &Player), Without<crowd::Marine>>,
+    level: LevelRoots,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    if game.crowd_alarm {
+        return;
+    }
+    let Some(Some(proc)) = game.crowd_procs.get(crowd::SAW_SNAKE).copied() else { return };
+    let Ok((snake, p)) = player.single() else { return };
+    if p.dead() {
+        return;
+    }
+    let (near, far) = game.crowd_sight;
+    let target = snake.pos + Vec3::Y * (p.height() * 0.6);
+    let seen = marines.iter().find(|m| {
+        let to = snake.pos - m.pos;
+        let dist = to.length();
+        if dist > far || (dist > near && (p.crouch || p.prone)) {
+            return false;
+        }
+        let ang = (to.x.atan2(to.z) - m.yaw).rem_euclid(std::f32::consts::TAU);
+        let ang = ang.min(std::f32::consts::TAU - ang);
+        let eye = m.pos + Vec3::Y * 1600.0;
+        ang <= std::f32::consts::FRAC_PI_4 && !game.collision.as_ref().is_some_and(|c| c.line_blocked(eye, target))
+    });
+    let Some(m) = seen else { return };
+    let at = [m.pos.x as i32, m.pos.y as i32, m.pos.z as i32];
+    game.crowd_alarm = true;
+    info!("a Marine saw Snake at {}: running {proc:#x}", snake.pos);
+    script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(proc, &at), &level, &bullets);
+}
+
 /// `--press-at`: action button presses at these times (seconds).
 #[derive(Resource)]
 struct AutoPress(Vec<f32>);
@@ -1452,6 +1535,8 @@ fn game_over(
         commands.entity(e).despawn();
     }
     game.arrivals.clear();
+    game.banks = game.start_banks.clone();
+    game.crowd_alarm = false;
 }
 
 fn hud(
