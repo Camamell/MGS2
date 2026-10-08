@@ -196,6 +196,20 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   commandant's speech is a chain of these, each proc picking the next, and
   its end is the time limit.
 
+## VOX.DAT (spoken lines): partly understood
+
+- Clips start on a sector with the DEMO.DAT chunk layout: `0x10` header
+  chunks (the second chunk's payload has `0x44ac` = 44100?), kind 1 audio
+  (16 KiB interleaved SPU ADPCM), kind 5 event packets every 5 frames
+  (some clips), kind 4 subtitles (same records as DEMO.DAT), and an end
+  chunk kind `0xf0` whose frame field is the clip's length. 3407 clips;
+  `examples/vox_index.rs` lists them.
+- Some `#7aa13a` ids are `0x20000000 + sector`: w04c's "caught" line
+  `0x2000ddaa` is the clip at sector 0xddaa ("Huh!? / Stop!! / Freeze!!",
+  2815 frames). The commandant's speech ids (0x20000000, 0x200003b4, ...,
+  0x2000ab08) do not land on clip starts (0x3b4 is inside the clip at
+  sector 909), so their mapping is still open.
+
 ## DEMO.DAT (cutscenes): subtitles only
 
 - Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i`
