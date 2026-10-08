@@ -131,6 +131,22 @@ The block gets `$1` box, `$2` actor, `$3` event, `$4..$6` actor position.
 Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
 (facing) and `-s` (stance; not modelled yet).
 
+## CODEC.DAT (Codec conversations)
+
+- Not encrypted: a run of GCL script records (same bytecode as stage`.gcx`),
+  each starting with the stamp `0x3bb29171` and padded to 16 bytes; 451 in
+  the NTSC-U disc. `mgs2-extract <iso> codec` writes them as text.
+- Stage scripts name a record by id: low 24 bits x 16 = byte offset in
+  CODEC.DAT (high byte: flags). `command #4a243a -o <event> <freq> <id>`
+  sets the conversation for calling `freq` in that area (on enter/stay, off
+  on leave); `-c <freq> <id> <mode>` is an incoming call; `-r` resets.
+  14112 = 141.12 (Otacon).
+- A record's `main` (`#57c8d1 "codec" ... {...}`) branches on story
+  variables and calls procs whose `#01e658 <voice id> {...}` blocks hold
+  the lines `#3b91eb <speaker> <?> -m str[n]`. Speakers: `0x4ab569`
+  Otacon, `0x28dce6` Snake (the player actor's name). Faces (`face`,
+  `#6b11d5` lip sync) and voices (VOX.DAT, the voice id) are not used yet.
+
 ## mar (motions): joint rotations and root height done
 
 Full layout in `mgs2-formats/src/mar.rs`. Player code is in the resident

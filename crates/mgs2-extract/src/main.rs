@@ -51,6 +51,14 @@ enum Cmd {
         #[arg(short, long, default_value = "extracted-obj")]
         out: PathBuf,
     },
+    /// Split CODEC.DAT (from the .iso) into its script records and
+    /// disassemble each to text.
+    Codec {
+        #[arg(short, long, default_value = "extracted-codec")]
+        out: PathBuf,
+        #[arg(long, default_value = "re/third_party/JoyDict-master/mgs2")]
+        dict: PathBuf,
+    },
     /// Disassemble .gcx scripts (from `extract` output) to text.
     Scripts {
         #[arg(short, long, default_value = "extracted-gcl")]
@@ -82,11 +90,12 @@ fn main() -> Result<()> {
         Cmd::Textures { out } => return textures::convert(&cli.input, out),
         Cmd::Models { png_dir, out } => return models::convert(&cli.input, png_dir, out),
         Cmd::Scripts { out, dict } => return scripts::convert(&cli.input, out, Some(dict)),
+        Cmd::Codec { out, dict } => return scripts::codec(&cli.input, out, dict),
         _ => {}
     }
     let mut dat = open_stage_dat(&cli.input)?;
     match cli.cmd {
-        Cmd::Textures { .. } | Cmd::Models { .. } | Cmd::Scripts { .. } => unreachable!(),
+        Cmd::Textures { .. } | Cmd::Models { .. } | Cmd::Scripts { .. } | Cmd::Codec { .. } => unreachable!(),
         Cmd::Stages => {
             for s in dat.stages() {
                 let tag = if is_tanker(&s.name) { "  [tanker]" } else { "" };

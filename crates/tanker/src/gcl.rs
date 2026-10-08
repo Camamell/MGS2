@@ -117,8 +117,30 @@ pub struct Vm<'a> {
     pub load: Option<String>,
     /// Run timer/fade callbacks immediately and stop at `load`.
     pub eager: bool,
+    /// Codec requests from the stage script.
+    pub codec: Vec<CodecReq>,
+    /// Running a CODEC.DAT record: collect its dialogue lines.
+    pub codec_mode: bool,
+    /// (speaker name hash, text) in order.
+    pub lines: Vec<(u32, String)>,
+    strings: &'a [String],
     last: i32,
     depth: u32,
+}
+
+/// The Codec command (`command #4a243a ...`) in stage scripts.
+pub const CODEC_COMMAND: u32 = 0x4A243A;
+/// A line of Codec dialogue.
+const CODEC_LINE: u32 = 0x3B91EB;
+
+#[derive(Clone, Copy, Debug)]
+pub enum CodecReq {
+    /// The conversation Snake gets when he calls `freq` in this area
+    /// (the trap event decides on/off).
+    Area { event: u32, freq: i32, id: u32 },
+    /// An incoming call.
+    Call { freq: i32, id: u32 },
+    Reset,
 }
 
 impl Banks {
@@ -148,6 +170,10 @@ impl<'a> Vm<'a> {
             traps: Vec::new(),
             load: None,
             eager: false,
+            codec: Vec::new(),
+            codec_mode: false,
+            lines: Vec::new(),
+            strings: &gcx.strings,
             last: 0,
             depth: 0,
         }
@@ -158,8 +184,8 @@ impl<'a> Vm<'a> {
     }
 
     /// The stage `load`ed, the actors created, and the variables.
-    pub fn finish(self) -> (Option<String>, Vec<Spawn>, Banks) {
-        (self.load, self.spawns, Banks { a: self.bank_a, b: self.bank_b })
+    pub fn finish(self) -> (Option<String>, Vec<Spawn>, Vec<CodecReq>, Banks) {
+        (self.load, self.spawns, self.codec, Banks { a: self.bank_a, b: self.bank_b })
     }
 
     /// Runs a proc with integer arguments (an actor's callback).
@@ -306,6 +332,23 @@ impl<'a> Vm<'a> {
                 };
             }
             None
+        } else if is("command") && matches!(a.first(), Some(Value::Name(CODEC_COMMAND))) {
+            // `command #4a243a -o <event> <freq> <id>` (the call Snake gets on
+            // this frequency here), `-c <freq> <id> <mode>` (an incoming
+            // call), `-r` (back to the default).
+            let ints = |s: &mut Self, v: &[Value]| v.iter().map(|x| s.value(x, args).int().unwrap_or(0)).collect::<Vec<i32>>();
+            for (l, v) in options {
+                let n = ints(self, v);
+                let req = match (l, n.as_slice()) {
+                    (b'o', [event, freq, id, ..]) => Some(CodecReq::Area { event: *event as u32, freq: *freq, id: *id as u32 }),
+                    (b'c', [freq, id, ..]) => Some(CodecReq::Call { freq: *freq, id: *id as u32 }),
+                    (b'r', _) => Some(CodecReq::Reset),
+                    _ => None,
+                };
+                self.codec.extend(req);
+            }
+            self.last = 0;
+            None
         } else if is("command") {
             // `command <id> <map> -s { ... }`: the setup block runs now.
             if let Some((_, v)) = options.iter().find(|(l, _)| *l == b's')
@@ -314,6 +357,34 @@ impl<'a> Vm<'a> {
                 }
             // Other commands' results are not modelled; read as 0.
             self.last = 0;
+            None
+        } else if self.codec_mode && name == CODEC_LINE {
+            // `#3b91eb <speaker> <?> -m str[n]`: one line of dialogue.
+            let speaker = match a.first().map(|v| self.value(v, args)) {
+                Some(v) => v.int().unwrap_or(0) as u32 & 0x00FF_FFFF,
+                None => 0,
+            };
+            let text = options
+                .iter()
+                .find(|(l, _)| *l == b'm')
+                .and_then(|(_, v)| match v.first() {
+                    Some(Value::StrRef(i)) => self.strings.get(*i as usize).cloned(),
+                    Some(Value::Str(s)) => Some(s.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            self.lines.push((speaker, text));
+            None
+        } else if self.codec_mode {
+            // Other Codec commands (the call itself, voice clips, ...): run
+            // their blocks in order.
+            for v in a.iter().chain(options.iter().flat_map(|(_, v)| v)) {
+                if let Value::Block(b) = v
+                    && let Some(r) = self.block(b, args)
+                {
+                    return Some(r);
+                }
+            }
             None
         } else {
             // mesg, trap, print, load, restart, command, ...: not yet.

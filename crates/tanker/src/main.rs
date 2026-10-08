@@ -7,6 +7,7 @@
 
 mod body;
 mod bullet;
+mod codec;
 mod collision;
 mod contact;
 mod gcl;
@@ -71,6 +72,9 @@ struct Cli {
     /// Aim the M9 at this time (seconds) and fire half a second later.
     #[arg(long)]
     fire_at: Option<f32>,
+    /// Call the Codec (as if K were pressed) at this time (seconds).
+    #[arg(long)]
+    codec_at: Option<f32>,
     /// How long to aim before that shot (seconds).
     #[arg(long, default_value_t = 0.5)]
     aim_for: f32,
@@ -131,6 +135,10 @@ pub struct Game {
     pub entrance: f32,
     /// The script camera switched on, if any.
     pub cameras: script_cam::Cameras,
+    /// (frequency, CODEC.DAT id) Snake reaches by calling from here.
+    pub codec_area: Option<(i32, u32)>,
+    /// Incoming calls waiting to open.
+    pub codec_calls: Vec<(i32, u32)>,
     /// Take the trap boxes Snake starts in as already entered (a start that
     /// is not an arrival, so nothing should fire for it).
     pub prime_traps: bool,
@@ -352,6 +360,7 @@ fn prepare(
     let mut items = Vec::new();
     let mut sliding = Vec::new();
     let mut cameras = script_cam::Cameras::default();
+    let mut codec_reqs = Vec::new();
     let mut banks_after = banks.clone();
     // Snake's start: the player actor's `-p x y z -d dir`, which read the
     // start variables; else the start variables themselves.
@@ -417,6 +426,7 @@ fn prepare(
             }
         }
         cameras.apply(&vm.spawns);
+        codec_reqs = vm.codec.clone();
         banks_after = vm.banks();
     }
 
@@ -440,7 +450,10 @@ fn prepare(
         entrance: 0.0,
         prime_traps: false,
         cameras,
+        codec_area: None,
+        codec_calls: Vec::new(),
     };
+    apply_codec(&mut game, &codec_reqs);
     if walk_in {
         game.entrance = ENTRANCE_WALK;
     } else {
@@ -453,6 +466,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let iso = cli.iso.or_else(stage::default_iso).context("pass --iso <path to MGS2 .iso> or set MGS2_ISO")?;
     let mut disc = stage::open_disc(&iso)?;
+    let codec_data = codec::CodecData::load(&iso).map_err(|e| eprintln!("CODEC.DAT not loaded: {e:#}")).ok();
 
     // Snake's start: how the previous stage sends him here, else one of this
     // stage's own entry points.
@@ -504,6 +518,7 @@ fn main() -> Result<()> {
     .insert_resource(bullet::Rng(0x2001_1113))
     .init_resource::<items::Inventory>()
     .init_resource::<contact::Punches>()
+    .init_resource::<codec::CodecState>()
     .insert_resource(Session {
         disc: Mutex::new(disc),
         difficulty: cli.difficulty,
@@ -523,7 +538,7 @@ fn main() -> Result<()> {
         cam_pitch: cli.cam_pitch.to_radians(),
         follow_guard: cli.follow_guard,
     })
-    .add_systems(Startup, setup)
+    .add_systems(Startup, (setup, codec::setup_screen))
     .add_systems(
         Update,
         (
@@ -548,8 +563,13 @@ fn main() -> Result<()> {
             bullet::draw,
             hud,
         )
-            .chain(),
+            .chain()
+            .run_if(codec::idle),
     );
+    app.add_systems(Update, (codec::input, codec::screen).chain());
+    if let Some(c) = codec_data {
+        app.insert_resource(c);
+    }
     app.add_systems(Update, body::hold.after(body::skin).before(player::follow_camera));
     if cli.trace {
         app.insert_resource(guard::Trace::default()).add_systems(Update, guard::trace);
@@ -559,6 +579,9 @@ fn main() -> Result<()> {
     }
     if let Some(t) = cli.fire_at {
         app.insert_resource(player::AutoFire(t, cli.aim_for));
+    }
+    if let Some(t) = cli.codec_at {
+        app.insert_resource(codec::AutoCall(t));
     }
     if !cli.punch_at.is_empty() {
         app.insert_resource(contact::AutoPunch(cli.punch_at.clone()));
@@ -743,8 +766,9 @@ fn script_event(
     let mut vm = gcl::Vm::with_banks(script, banks);
     vm.eager = true;
     run(&mut vm);
-    let (load, spawns, banks) = vm.finish();
+    let (load, spawns, codec, banks) = vm.finish();
     game.cameras.apply(&spawns);
+    apply_codec(game, &codec);
     let Some(next) = load else {
         game.banks = banks;
         return;
@@ -776,6 +800,28 @@ fn script_event(
     *game = new.game;
     commands.insert_resource(new.phase);
     commands.insert_resource(NewCast(Mutex::new(Some(new.cast))));
+}
+
+/// Codec requests from a script run: the area's call (on while its trap
+/// reports enter/stay, off on leave), incoming calls, resets.
+fn apply_codec(game: &mut Game, reqs: &[gcl::CodecReq]) {
+    use gcl::{CodecReq, trap_event};
+    for r in reqs {
+        match *r {
+            CodecReq::Area { event, freq, id } if event == trap_event::LEAVE => {
+                if game.codec_area == Some((freq, id)) {
+                    game.codec_area = None;
+                }
+            }
+            CodecReq::Area { freq, id, .. } => game.codec_area = Some((freq, id)),
+            CodecReq::Call { freq, id } => {
+                if !game.codec_calls.contains(&(freq, id)) {
+                    game.codec_calls.push((freq, id));
+                }
+            }
+            CodecReq::Reset => game.codec_area = None,
+        }
+    }
 }
 
 /// The trap boxes Snake is in, with the game's enter / stay / leave

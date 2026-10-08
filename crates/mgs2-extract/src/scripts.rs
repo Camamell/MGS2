@@ -37,6 +37,38 @@ pub fn convert(input: &Path, out: &Path, dict: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
+/// CODEC.DAT is a run of GCL script records, each starting with the same
+/// 32-bit stamp (`0x3bb29171`, in the timestamp slot of a `.gcx`). Writes
+/// `NNN.gcl.txt` per record and `index.txt` (offset, size, first line).
+pub fn codec(iso: &Path, out: &Path, dict: &Path) -> Result<()> {
+    use std::io::Read as _;
+    let mut data = Vec::new();
+    mgs2_formats::iso::Iso::open(iso)?.open_file("MGS2/CODEC.DAT")?.read_to_end(&mut data)?;
+    let stamp = &data[..4];
+    let mut starts: Vec<usize> = (0..data.len().saturating_sub(4)).step_by(16).filter(|&i| &data[i..i + 4] == stamp).collect();
+    starts.push(data.len());
+    let mut names = Names::with_builtin();
+    if dict.is_dir() {
+        names.load_dir(dict)?;
+    }
+    fs::create_dir_all(out)?;
+    let mut index = String::new();
+    for (n, w) in starts.windows(2).enumerate() {
+        let rec = &data[w[0]..w[1]];
+        let line = match gcx::parse(rec) {
+            Ok(g) => {
+                fs::write(out.join(format!("{n:03}.gcl.txt")), render(&g, &names))?;
+                g.strings.iter().find(|s| s.trim().len() > 3).map_or(String::new(), |s| s.replace('\n', " "))
+            }
+            Err(e) => format!("(not parsed: {e})"),
+        };
+        writeln!(index, "{n:03} {:#09x} {:7} {}", w[0], rec.len(), line.chars().take(90).collect::<String>())?;
+    }
+    fs::write(out.join("index.txt"), &index)?;
+    println!("{} records -> {}", starts.len() - 1, out.display());
+    Ok(())
+}
+
 fn find(dir: &Path, ext: &str) -> Vec<PathBuf> {
     if dir.is_file() {
         return vec![dir.to_path_buf()];

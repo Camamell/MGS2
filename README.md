@@ -29,6 +29,7 @@ cargo run --release -p mgs2-extract -- "path/to/mgs2.iso" extract --tanker -o ex
 cargo run --release -p mgs2-extract -- extracted textures -o extracted-png
 cargo run --release -p mgs2-extract -- extracted models --png-dir extracted-png -o extracted-obj
 cargo run --release -p mgs2-extract -- extracted scripts -o extracted-gcl
+cargo run --release -p mgs2-extract -- "path/to/mgs2.iso" codec
 ```
 
 `cargo test` also parses every extracted file when `extracted/` exists.
@@ -60,6 +61,7 @@ too.
 | F (hold, release) | aim (A/D turn) and fire the M9 tranquilizer; aiming at an unaware guard from behind holds him up, and from his front he gives up his dog tags |
 | V | punch (three in a row knock a guard out) |
 | R | equip / unequip a ration (revives Snake at zero life) |
+| K | call the Codec (141.12); Space next line, Esc hang up |
 | Enter | continue after a game over |
 | Q / E, right mouse drag | turn the camera |
 | F1 | collision, plus patrol routes |
