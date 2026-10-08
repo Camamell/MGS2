@@ -149,6 +149,17 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   Otacon, `0x28dce6` Snake (the player actor's name). Faces (`face`,
   `#6b11d5` lip sync) and voices (VOX.DAT, the voice id) are not used yet.
 
+## DEMO.DAT (cutscenes): subtitles only
+
+- Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i`
+  `0x40000000 + n`; n is the demo's first sector (2048 bytes).
+- A demo is a chain of chunks `u32 kind, u32 size, u32 frame, u32 0`: three
+  kind-0x10 headers, then kind 2 (event packets every 5 frames with typed
+  sub-records `0x8000000x`: cameras and actors, not decoded), kind 1 (16 KiB
+  streamed audio) and kind 4 (subtitles). Subtitle payload: `u32 size`, then
+  records `u32 start frame, u32 end frame, u32 0, u32 length`, text with
+  `0x80 '|'` line breaks.
+
 ## mar (motions): joint rotations and root height done
 
 Full layout in `mgs2-formats/src/mar.rs`. Player code is in the resident

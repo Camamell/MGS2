@@ -10,6 +10,7 @@ mod bullet;
 mod codec;
 mod collision;
 mod contact;
+mod demo;
 mod gcl;
 mod guard;
 mod items;
@@ -73,6 +74,13 @@ struct Cli {
     /// Aim the M9 at this time (seconds) and fire half a second later.
     #[arg(long)]
     fire_at: Option<f32>,
+    /// Do not show cutscene subtitles (always the case with --screenshot,
+    /// so automated runs are not paused).
+    #[arg(long)]
+    skip_cutscenes: bool,
+    /// Show cutscene subtitles even with --screenshot.
+    #[arg(long)]
+    cutscenes: bool,
     /// Start with the stage cameras off (F3 toggles).
     #[arg(long)]
     no_stage_cams: bool,
@@ -313,6 +321,8 @@ struct Session {
     show_vision: bool,
     use_door: Option<(usize, f32)>,
     trace_traps: bool,
+    iso: PathBuf,
+    skip_cutscenes: bool,
     cull: Option<bevy::render::render_resource::Face>,
 }
 
@@ -540,6 +550,14 @@ fn main() -> Result<()> {
     // walks in through the door.
     let walk_in = arrival.is_some() && from.as_deref().is_some_and(|f| f.starts_with('w'));
     let mut level = prepare(&mut disc, &cli.stage, banks, walk_in, cli.spawns, cli.vision)?;
+    // The cutscene Snake comes from (the opening briefing for w00a).
+    let skip_cutscenes = cli.skip_cutscenes || (cli.screenshot.is_some() && !cli.cutscenes);
+    let opening = match from.as_deref() {
+        Some(f) if f.starts_with('d') && f.ends_with('t') && !skip_cutscenes => {
+            stage::script(&mut disc, f)?.map(|g| demo::load(&iso, f, &g))
+        }
+        _ => None,
+    };
     level.game.prime_traps = arrival.is_none();
 
     let mut app = App::new();
@@ -555,6 +573,7 @@ fn main() -> Result<()> {
     .init_resource::<items::Inventory>()
     .init_resource::<contact::Punches>()
     .init_resource::<codec::CodecState>()
+    .insert_resource(opening.unwrap_or_default())
     .insert_resource(Session {
         disc: Mutex::new(disc),
         difficulty: cli.difficulty,
@@ -562,6 +581,8 @@ fn main() -> Result<()> {
         show_vision: cli.vision,
         use_door: cli.use_door.map(|d| (d, cli.door_at)),
         trace_traps: cli.trace,
+        iso: iso.clone(),
+        skip_cutscenes,
         cull: match cli.cull.as_str() {
             "back" => Some(bevy::render::render_resource::Face::Back),
             "front" => Some(bevy::render::render_resource::Face::Front),
@@ -575,7 +596,7 @@ fn main() -> Result<()> {
         follow_guard: cli.follow_guard,
         no_stage_cams: cli.no_stage_cams,
     })
-    .add_systems(Startup, (setup, codec::setup_screen))
+    .add_systems(Startup, (setup, codec::setup_screen, demo::setup_screen))
     .add_systems(
         Update,
         (
@@ -601,14 +622,16 @@ fn main() -> Result<()> {
             hud,
         )
             .chain()
-            .run_if(codec::idle),
+            .run_if(codec::idle)
+            .run_if(demo::idle),
     );
-    app.add_systems(Update, (codec::input, codec::screen).chain());
+    app.add_systems(Update, (codec::input, codec::screen).chain().run_if(demo::idle));
+    app.add_systems(Update, demo::play);
     if let Some(c) = codec_data {
         app.insert_resource(c);
     }
     app.add_systems(Update, body::hold.after(body::skin).before(player::follow_camera));
-    app.add_systems(Update, olga::think.after(guard::think).before(bullet::fly).run_if(codec::idle));
+    app.add_systems(Update, olga::think.after(guard::think).before(bullet::fly).run_if(codec::idle).run_if(demo::idle));
     if cli.trace {
         app.insert_resource(guard::Trace::default()).add_systems(Update, guard::trace);
     }
@@ -828,10 +851,13 @@ fn script_event(
         None => next,
     };
     let mut banks = banks;
-    let next = {
+    let (next, cutscene) = {
         let mut disc = session.disc.lock().unwrap();
-        skip_cutscene(&mut disc, next, &mut banks)
+        skip_cutscene(&mut disc, &session.iso, next, &mut banks)
     };
+    if let Some(c) = cutscene.filter(|_| !session.skip_cutscenes) {
+        commands.insert_resource(c);
+    }
     info!("loading {next}");
     let level_result = {
         let mut disc = session.disc.lock().unwrap();
@@ -855,13 +881,15 @@ fn script_event(
 /// Cutscene stages (`d..t`) are not played yet: follow the cutscene's own
 /// exit to the next gameplay stage, with the start position and story
 /// marker its script would set.
-fn skip_cutscene(disc: &mut Disc, name: String, banks: &mut gcl::Banks) -> String {
+fn skip_cutscene(disc: &mut Disc, iso: &std::path::Path, name: String, banks: &mut gcl::Banks) -> (String, Option<demo::Cutscene>) {
     let is_demo = |n: &str| n.starts_with('d') && n.ends_with('t');
     if !is_demo(&name) {
-        return name;
+        return (name, None);
     }
+    let mut cutscene = None;
     let targets: Vec<String> = match stage::script(disc, &name) {
         Ok(Some(g)) => {
+            cutscene = Some(demo::load(iso, &name, &g));
             let mut out = Vec::new();
             collect_loads(&g.main, &mut out);
             g.procs.iter().for_each(|p| collect_loads(&p.body, &mut out));
@@ -877,11 +905,11 @@ fn skip_cutscene(disc: &mut Disc, name: String, banks: &mut gcl::Banks) -> Strin
                     banks.set_a32(gcl::PROGRESS, p as i32);
                 }
                 info!("skipping cutscene {name} -> {target}");
-                return target.clone();
+                return (target.clone(), cutscene);
             }
         }
     }
-    name
+    (name, None)
 }
 
 fn collect_loads(stmts: &[mgs2_formats::gcx::Stmt], out: &mut Vec<String>) {

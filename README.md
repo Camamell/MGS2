@@ -97,6 +97,9 @@ What works:
 - Olga on the navigational deck (w00b) as a simplified stand-in fight (her
   real step-table AI is located but not ported; see `re/notes/guard-ai.md`).
 - Codec calls (K) with the original dialogue; hanging from railings.
+- Cutscenes show their subtitles (the scenes themselves are not decoded yet;
+  `--skip-cutscenes`), and exits through a cutscene continue to the stage it
+  leads to.
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range.
