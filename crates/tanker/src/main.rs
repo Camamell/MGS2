@@ -235,8 +235,9 @@ struct Cast {
     sliding: Vec<(Prop, SlidingDoor)>,
     /// Bosses: (model, motions, position, facing).
     bosses: Vec<(usize, Option<usize>, Vec3, f32, Option<u32>)>,
-    /// Marines in formation: (model, motions, position, facing, idle).
-    crowd: Vec<(usize, Option<usize>, Vec3, f32, i32)>,
+    /// Marines in formation: (model, motions, position, facing, idle, head
+    /// accessory models).
+    crowd: Vec<(usize, Option<usize>, Vec3, f32, i32, Vec<usize>)>,
 }
 
 /// A static model placed by the script: `chara 0x7a8ec1` (scenery such as
@@ -514,7 +515,8 @@ fn prepare(
             .iter()
             .filter_map(|m| {
                 let model = variants.get(&m.variant).copied().or_else(|| model_index(&data, crowd::model_name(m.variant)))?;
-                Some((model, ushold, m.pos, m.yaw, m.idle))
+                let extras = crowd::accessories(m.flags).into_iter().filter_map(|n| model_index(&data, n)).collect();
+                Some((model, ushold, m.pos, m.yaw, m.idle, extras))
             })
             .collect();
         items = vm
@@ -854,35 +856,36 @@ fn spawn_level(
             (bundle, LevelEntity),
         )
     };
-    // (owner, weapon model, shown only while aiming)
+    // (owner, model, shown only while aiming, orientation, joint)
     let mut weapons = Vec::new();
     match cast.snake {
         Some((model, motions, pos, yaw)) => {
             let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
             commands.entity(e).insert(Player::new(session.difficulty));
-            weapons.extend(model_index(data, "m92").map(|m| (e, m, true, body::pistol_grip())));
+            weapons.extend(model_index(data, "m92").map(|m| (e, m, true, body::pistol_grip(), body::RIGHT_HAND)));
         }
         None => error!("Snake's model (sna_def) not found"),
     }
     for (g, model, motions, pos, gun) in cast.guards {
         let e = spawn(&mut commands, model, Body::new(pos, 0.0, model, motions));
         commands.entity(e).insert(g);
-        weapons.extend(gun.map(|m| (e, m, false, body::rifle_grip())));
+        weapons.extend(gun.map(|m| (e, m, false, body::rifle_grip(), body::RIGHT_HAND)));
     }
     for (model, motions, pos, yaw, on_down) in cast.bosses {
         let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
         commands.entity(e).insert(olga::Olga::new(on_down));
     }
-    for (model, motions, pos, yaw, idle) in cast.crowd {
+    for (model, motions, pos, yaw, idle, extras) in cast.crowd {
         let mut b = Body::new(pos, yaw, model, motions);
         b.frame = idle as f32 * 7.0;
         let e = spawn(&mut commands, model, b);
         commands.entity(e).insert(crowd::Marine);
+        weapons.extend(extras.into_iter().map(|m| (e, m, false, Quat::IDENTITY, crowd::HEAD)));
     }
-    for (owner, model, when_aiming, grip) in weapons {
+    for (owner, model, when_aiming, grip, object) in weapons {
         let m = &data.models[model].1;
         let e = scene::spawn_model(&mut commands, m, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
-        commands.entity(e).insert(body::Held { owner, object: body::RIGHT_HAND, when_aiming, grip });
+        commands.entity(e).insert(body::Held { owner, object, when_aiming, grip });
     }
 }
 

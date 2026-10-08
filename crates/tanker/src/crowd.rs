@@ -11,8 +11,8 @@
 //! moved by the actor later (the commandant's walk) and are left out here.
 //!
 //! Drawn standing with the first `ushold` motion, with their variants'
-//! parts; the accessories (caps, helmets, rifles) and the crowd's
-//! reactions are not done yet.
+//! parts and head accessories; slung rifles and the crowd's reactions are
+//! not done yet.
 
 use bevy::prelude::*;
 use mgs2_formats::kms;
@@ -31,6 +31,31 @@ pub struct Member {
     pub yaw: f32,
     pub variant: i32,
     pub idle: i32,
+    pub flags: i32,
+}
+
+/// The head joint accessories hang on.
+pub const HEAD: usize = 12;
+
+/// Head accessories by flag bit (`FUN_0022a5d8`: cap 0x1 wins over helmet
+/// 0x4, hat 0x80 and headphones 0x100; glasses 0x2 come on top).
+pub fn accessories(flags: i32) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if flags & 0x185 != 0 {
+        out.push(if flags & 1 != 0 {
+            "obj_cap"
+        } else if flags & 4 != 0 {
+            "obj_helmet_def_s"
+        } else if flags & 0x80 != 0 {
+            "sco_hat"
+        } else {
+            "obj_headphone_def"
+        });
+    }
+    if flags & 2 != 0 {
+        out.push("obj_glass");
+    }
+    out
 }
 
 pub fn members(s: &Spawn) -> Vec<Member> {
@@ -47,6 +72,7 @@ pub fn members(s: &Spawn) -> Vec<Member> {
                 yaw: v(5) as f32 / 4096.0 * std::f32::consts::TAU,
                 variant: v(7).rem_euclid(22),
                 idle: v(9).rem_euclid(6),
+                flags: v(10),
             })
         })
         .collect()
