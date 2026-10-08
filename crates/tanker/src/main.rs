@@ -661,7 +661,13 @@ fn main() -> Result<()> {
     let skip_cutscenes = cli.skip_cutscenes || (cli.screenshot.is_some() && !cli.cutscenes);
     let opening = match from.as_deref() {
         Some(f) if f.starts_with('d') && f.ends_with('t') && !skip_cutscenes => {
-            stage::script(&mut disc, f)?.map(|g| demo::load(&iso, f, &g, stage::load(&mut disc, f).ok()))
+            stage::script(&mut disc, f)?.map(|g| {
+                let data = stage::load(&mut disc, f).ok();
+                let scenery = data.as_ref().map(|d| cutscene_scenery(&g, d, &level.game.banks)).unwrap_or_default();
+                let mut c = demo::load(&iso, f, &g, data);
+                c.scenery = scenery;
+                c
+            })
         }
         _ => None,
     };
@@ -1060,7 +1066,11 @@ fn skip_cutscene(
     let mut cutscene = None;
     let targets: Vec<String> = match stage::script(disc, &name) {
         Ok(Some(g)) => {
-            cutscene = Some(demo::load(iso, &name, &g, stage::load(disc, &name).ok()));
+            let data = stage::load(disc, &name).ok();
+            let scenery = data.as_ref().map(|d| cutscene_scenery(&g, d, banks)).unwrap_or_default();
+            let mut c = demo::load(iso, &name, &g, data);
+            c.scenery = scenery;
+            cutscene = Some(c);
             let mut out = Vec::new();
             collect_loads(&g.main, &mut out);
             g.procs.iter().for_each(|p| collect_loads(&p.body, &mut out));
@@ -1118,6 +1128,23 @@ fn chapter_end(mut commands: Commands, end: Option<Res<ChapterEnd>>, shown: Quer
         },
         GlobalZIndex(10),
     ));
+}
+
+/// Actors that place a cutscene's sky (`0x6273b5`) and sea (`0xa895c4`),
+/// both `-m model -p x y z`.
+const BACKDROP_ACTORS: &[u32] = &[0x6273B5, 0xA895C4];
+
+/// The scenery a cutscene stage's script sets up: its props (the deck
+/// pieces, `0x7a8ec1`), sky and sea, as (model, transform).
+fn cutscene_scenery(script: &mgs2_formats::gcx::Gcx, data: &StageData, banks: &gcl::Banks) -> Vec<(usize, Transform)> {
+    let mut vm = gcl::Vm::with_banks(script, banks.clone());
+    vm.run(&script.main);
+    vm.spawns
+        .iter()
+        .filter(|s| PROP_ACTORS.contains(&s.kind) || BACKDROP_ACTORS.contains(&s.kind))
+        .filter_map(|s| prop(s, data))
+        .map(|p| (p.model, p.transform))
+        .collect()
 }
 
 fn collect_loads(stmts: &[mgs2_formats::gcx::Stmt], out: &mut Vec<String>) {

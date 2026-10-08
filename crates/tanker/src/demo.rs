@@ -89,8 +89,11 @@ pub struct Cutscene {
     parks: Vec<Option<Vec3>>,
     /// The cutscene stage's data (models and textures).
     pub stage: Option<StageData>,
-    /// Level shown behind the actors: the stage the cutscene was reached
-    /// from (demos carry no level of their own).
+    /// The scenery the cutscene stage's script places (its deck pieces,
+    /// sky and sea): models of `stage` and their placement.
+    pub scenery: Vec<(usize, Transform)>,
+    /// Without scenery, the level of the stage the cutscene was reached
+    /// from is shown behind the actors.
     pub backdrop: Option<StageData>,
     /// Frames since it began.
     pub frame: f32,
@@ -134,7 +137,7 @@ pub fn load(iso: &Path, name: &str, script: &Gcx, stage: Option<StageData>) -> C
         offset
     );
     let parks = demos.iter().map(|(_, d)| park(d)).collect();
-    Cutscene { lines, demos, parks, stage, backdrop: None, frame: 0.0, length: offset as f32, name: name.to_string(), spawned: false }
+    Cutscene { lines, demos, parks, stage, scenery: Vec::new(), backdrop: None, frame: 0.0, length: offset as f32, name: name.to_string(), spawned: false }
 }
 
 /// Where a demo parks the actors it is not showing: the position most of
@@ -271,6 +274,7 @@ pub fn stage(
             }
             c.spawned = false;
             c.stage = None;
+            c.scenery.clear();
             c.backdrop = None;
             c.demos.clear();
         }
@@ -294,11 +298,16 @@ pub fn stage(
         *normal_fov = Some(pp.fov);
     }
     let c = c.into_inner();
-    if let Some(b) = &c.backdrop {
-        let mut cache = MaterialCache { cull: Some(bevy::render::render_resource::Face::Front), ..default() };
-        scene::spawn_level(&mut commands, b, &mut cache, &mut meshes, &mut images, &mut materials, true, Backdrop);
-    }
     let data = c.stage.as_ref().unwrap();
+    let mut cull = MaterialCache { cull: Some(bevy::render::render_resource::Face::Front), ..default() };
+    if !c.scenery.is_empty() {
+        for (model, tf) in &c.scenery {
+            let e = scene::spawn_model(&mut commands, &data.models[*model].1, data, &mut cull, &mut meshes, &mut images, &mut materials, true, Backdrop);
+            commands.entity(e).insert(*tf);
+        }
+    } else if let Some(b) = &c.backdrop {
+        scene::spawn_level(&mut commands, b, &mut cull, &mut meshes, &mut images, &mut materials, true, Backdrop);
+    }
     let mut cache = MaterialCache::default();
     let mut n = 0;
     for (di, (_, d)) in c.demos.iter().enumerate() {

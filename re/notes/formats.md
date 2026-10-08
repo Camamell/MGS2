@@ -222,25 +222,43 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   line's loudness best matches its lip-sync chunks (kind 5) at about
   9.5 kHz. The stereo interleave is unknown too. No audio is played yet.
 
-## DEMO.DAT (cutscenes): subtitles only
+## DEMO.DAT (cutscenes): cameras and actors decoded
 
-- Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i`
-  `0x40000000 + n`; n is the demo's first sector (2048 bytes).
-- A demo is a chain of chunks `u32 kind, u32 size, u32 frame, u32 0`: three
-  kind-0x10 headers, then kind 2 (event packets every 5 frames with typed
-  sub-records `0x8000000x`: cameras and actors, not decoded), kind 1 (16 KiB
-  streamed audio) and kind 4 (subtitles). Subtitle payload: `u32 size`, then
-  records `u32 start frame, u32 end frame, u32 0, u32 length`, text with
-  `0x80 '|'` line breaks.
-- Event packet sub-records (`u32 type, u32 size`), first look at demo 0
-  (d01t):
-  - `0x00000003` (0x40 bytes, one per packet): looks like the camera:
-    a key id, floats (fov or roll?), then eye xyz and target xyz (f32, w = 0);
-    d01t's coordinates are far from the tanker (the bridge prologue).
-  - `0x80000001` (0x10): paired key ids (camera interpolation?).
-  - `0x80000006` / `0x80000004`: actor creation / model loads (hashes).
-  - `0x80000007`: per-actor data every packet, variable size (motion?).
-
+- Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i
+  0x40000000 + n`; n is the demo's first sector (2048 bytes).
+- A demo is a chain of chunks `u32 kind, u32 size, u32 frame, u32 0`:
+  kind-0x10 headers, kind 2 (event packets every 5 frames), kind 1 (16 KiB
+  streamed audio), kind 4 (subtitles: `u32 size`, then records `u32 start,
+  u32 end, u32 0, u32 length`, text with `0x80 '|'` line breaks) and 0xf0
+  (end; its frame is the length).
+- The demo player is the `demo` actor (`cmd_33a20f`) in each cutscene
+  stage's resident image (analysed for d05t in `re/ghidra-d05t`).
+  `FUN_00216308` dispatches packet sub-records `u32 type, u32 size, u32
+  serial, ...` on `type & 0x7fffffff` through the table at 0x1f3198:
+  - 2 (`FUN_00219020`): messages; sub-kind 1 removes the model loaded by
+    serial +0x14.
+  - 3 (`FUN_002190e0` -> camera actor `FUN_00219ac8`): +0x14 zoom, +0x18
+    roll (radians), +0x20 eye, +0x30 target (f32 mm).
+  - 4 (`FUN_002163f8` -> `FUN_00217a80`): a model object keyed by the
+    record's serial: +0x1c kms file id (type 0x0a), +0x18 name, +0x10 an
+    optional `.evm` skinned mesh on top (`0x04xxxxxx`), +0x14 flags.
+  - 6 (`FUN_002167f8`): other actors by constructor id (+0x10).
+  - 7 (`FUN_00219718`): the actor stream, ids = model serials. `u32 n` at
+    +0x10; entries at +0x20 `u32 id, u16 flags, u8, u8 joints, u16 data
+    offset, u16`. Data: flag 1 position (16 bytes, f32 xyz), flag 2 root
+    angles (u16 x y z in 4096ths + u16), then per joint a control word (low
+    byte = joints it covers, bit `0x100 << k` = value k absent) and the
+    values: quaternion x y z w as i16 / 16383, translation as half floats
+    (`FUN_00219a88`, scaled by 128). Absent values keep their last value; a
+    word's values serve all the joints it covers. Joint 0's translation is
+    the hips' position; joints past the kms object count belong to the
+    `.evm` mesh.
+- Scenery is not in the demo: the cutscene stage's script places it with
+  the usual prop actor `0x7a8ec1` (the deck pieces), a sky (`0x6273b5`) and
+  sea pieces (`0xa895c4`).
+- Open: the `.evm` meshes, type-6 actors (effects, lights), how actors are
+  hidden or attached (the port hides the shared parking spot and positions
+  near the origin), audio.
 ## mar (motions): joint rotations and root height done
 
 Full layout in `mgs2-formats/src/mar.rs`. Player code is in the resident

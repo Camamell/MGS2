@@ -111,9 +111,11 @@ What works:
   from the disc (aim, burst timings, reloads, moving between her positions);
   only the choice of the next sequence is simplified (`re/notes/guard-ai.md`).
 - Codec calls (K) with the original dialogue; hanging from railings.
-- Cutscenes show their subtitles (the scenes themselves are not decoded yet;
-  `--skip-cutscenes`), and exits through a cutscene continue to the stage it
-  leads to.
+- Cutscenes play from DEMO.DAT: the camera track, the characters posed by
+  the demo's actor stream, the cutscene stage's scenery, and subtitles
+  (`--skip-cutscenes` to skip; Space next line, Esc skip). No audio, no
+  `.evm` skinned meshes (characters use their kms models) or effects.
+  Exits through a cutscene continue to the stage it leads to.
 - The holds' finale (w04c): photograph Metal Gear RAY with the digital
   camera. Photos are graded by a port of the game's own routine against the
   script's targets, saved to the six-photo album, and sent from the
