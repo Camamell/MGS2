@@ -270,6 +270,15 @@ fn main() -> Result<()> {
     // stage's own entry points.
     let mut banks = gcl::Banks::default();
     banks.set_b16(gcl::DIFFICULTY, cli.difficulty);
+    // The title screen's script opens with the per-difficulty settings
+    // (guard vision ranges As16:0x1bc.., timers); run just that statement.
+    if let Some(title) = stage::script(&mut disc, "n_title")? {
+        if let Some(first) = title.main.first() {
+            let mut vm = gcl::Vm::with_banks(&title, banks);
+            vm.run(std::slice::from_ref(first));
+            banks = vm.banks();
+        }
+    }
     let from = cli.from.clone().or_else(|| (cli.stage == "w00a").then(|| "d01t".to_string()));
     let arrival = match from.as_deref() {
         Some("none") | None => None,

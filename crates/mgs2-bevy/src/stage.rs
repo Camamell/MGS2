@@ -175,13 +175,18 @@ pub struct Arrival {
     pub progress: Option<u32>,
 }
 
-pub fn arrivals(disc: &mut Disc, from: &str, target: &str) -> Result<Vec<Arrival>> {
-    let stage = disc.read_stage(from)?;
+/// Just a stage's script (`scenerio.gcx`), without loading the rest.
+pub fn script(disc: &mut Disc, name: &str) -> Result<Option<gcx::Gcx>> {
+    let stage = disc.read_stage(name)?;
     let Some((page, f)) = stage.files().find(|(_, f)| f.type_id() == 6 && f.name_hash() == str_code(b"scenerio"))
     else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
-    let g = gcx::parse(page.file_data(f))?;
+    Ok(Some(gcx::parse(page.file_data(f))?))
+}
+
+pub fn arrivals(disc: &mut Disc, from: &str, target: &str) -> Result<Vec<Arrival>> {
+    let Some(g) = script(disc, from)? else { return Ok(Vec::new()) };
     let mut out = Vec::new();
     for p in &g.procs {
         let loads_target = p.body.iter().any(|s| {
