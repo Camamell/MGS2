@@ -14,6 +14,7 @@ mod gcl;
 mod guard;
 mod items;
 mod nav;
+mod olga;
 mod player;
 mod script_cam;
 
@@ -193,6 +194,8 @@ struct Cast {
     /// Item boxes and their model.
     items: Vec<(items::Item, usize)>,
     sliding: Vec<(Prop, SlidingDoor)>,
+    /// Bosses: (model, motions, position, facing).
+    bosses: Vec<(usize, Option<usize>, Vec3, f32)>,
 }
 
 /// A static model placed by the script: `chara 0x7a8ec1` (scenery such as
@@ -368,6 +371,7 @@ fn prepare(
     let mut props = Vec::new();
     let mut items = Vec::new();
     let mut sliding = Vec::new();
+    let mut bosses = Vec::new();
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
     let mut banks_after = banks.clone();
@@ -412,6 +416,25 @@ fn prepare(
         props = vm.spawns.iter().filter(|s| PROP_ACTORS.contains(&s.kind)).filter_map(|s| prop(s, &data)).collect();
         props.extend(vm.spawns.iter().filter(|s| s.kind == DOOR_ACTOR).flat_map(|s| door_props(s, &data)));
         sliding = vm.spawns.iter().filter(|s| s.kind == SLIDING_DOOR).filter_map(|s| sliding_door(s, &data)).collect();
+        bosses = vm
+            .spawns
+            .iter()
+            .filter(|s| s.kind == olga::OLGA_ACTOR)
+            .filter_map(olga::from_spawn)
+            .filter_map(|(m, a, mut p, yaw)| {
+                let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == m)?;
+                let motions = data.motions.iter().position(|(h, _)| *h & 0x00FF_FFFF == a);
+                // Her scripted spot is an intro position on top of a wall;
+                // the stand-in fight uses the nearest walkable node.
+                if let Some(n) = nav.as_ref().and_then(|n| n.node_at(p - Vec3::Y * 1000.0).map(|i| n.node_pos(i))) {
+                    p = n;
+                }
+                if let Some(y) = collision.as_ref().and_then(|c| c.floor_below(p.x, p.z, p.y + 100.0)) {
+                    p.y = y;
+                }
+                Some((model, motions, p, yaw))
+            })
+            .collect();
         items = vm
             .spawns
             .iter()
@@ -472,7 +495,7 @@ fn prepare(
     } else {
         game.entrance_done();
     }
-    Ok(Level { game, phase, cast: Cast { snake, guards, props, items, sliding } })
+    Ok(Level { game, phase, cast: Cast { snake, guards, props, items, sliding, bosses } })
 }
 
 fn main() -> Result<()> {
@@ -585,6 +608,7 @@ fn main() -> Result<()> {
         app.insert_resource(c);
     }
     app.add_systems(Update, body::hold.after(body::skin).before(player::follow_camera));
+    app.add_systems(Update, olga::think.after(guard::think).before(bullet::fly).run_if(codec::idle));
     if cli.trace {
         app.insert_resource(guard::Trace::default()).add_systems(Update, guard::trace);
     }
@@ -706,6 +730,10 @@ fn spawn_level(
         let e = spawn(&mut commands, model, Body::new(pos, 0.0, model, motions));
         commands.entity(e).insert(g);
         weapons.extend(model_index(data, "aks").map(|m| (e, m, false, body::rifle_grip())));
+    }
+    for (model, motions, pos, yaw) in cast.bosses {
+        let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
+        commands.entity(e).insert(olga::Olga::new(pos));
     }
     for (owner, model, when_aiming, grip) in weapons {
         let m = &data.models[model].1;
@@ -992,6 +1020,7 @@ fn hud(
     player: Query<(&Body, &Player)>,
     guards: Query<&Guard>,
     inv: Res<items::Inventory>,
+    olgas: Query<&olga::Olga>,
     mut text: Query<&mut Text, With<Hud>>,
 ) {
     let (Ok((b, p)), Ok(mut t)) = (player.single(), text.single_mut()) else { return };
@@ -1011,7 +1040,10 @@ fn hud(
         let grip = p.hang.map_or(String::new(), |h| format!("   GRIP {}", bar((h.grip * 100.0) as i32, 100)));
         format!("LIFE {} {}/{}{}{grip}", bar(p.life, p.max_life), p.life, p.max_life, if p.hurt > 0.0 { "  HIT!" } else { "" })
     };
-    let prompt = if door_in_reach(&game, b.pos).is_some() { "  [Space] open door" } else { "" };
+    let mut prompt = if door_in_reach(&game, b.pos).is_some() { "  [Space] open door".to_string() } else { String::new() };
+    for o in &olgas {
+        prompt += &if o.down() { "   OLGA: down".to_string() } else { format!("   OLGA {}", bar(o.stamina, 100)) };
+    }
     let mut carried: Vec<String> =
         inv.counts.iter().filter(|(_, n)| **n > 0).map(|((k, i), n)| format!("{} {n}", items::name(*k, *i))).collect();
     if inv.ration_equipped {

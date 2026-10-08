@@ -94,6 +94,10 @@ What works:
   ceilings drop away under overhead views; elsewhere (or with F3) a follow
   camera keeps walls and decks out of the way.
 
+- Olga on the navigational deck (w00b) as a simplified stand-in fight (her
+  real step-table AI is located but not ported; see `re/notes/guard-ai.md`).
+- Codec calls (K) with the original dialogue; hanging from railings.
+
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range.
 

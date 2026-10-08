@@ -9,6 +9,7 @@ use mgs2_bevy::scene::SCALE;
 use crate::Game;
 use crate::body::Body;
 use crate::guard::Guard;
+use crate::olga::Olga;
 use crate::player::{HEIGHT, Player, RADIUS};
 
 /// Hits above this height (mm over the feet) count as head shots.
@@ -80,7 +81,8 @@ pub fn fly(
     game: Res<Game>,
     mut bullets: Query<(Entity, &mut Bullet)>,
     mut snake: Query<(&Body, &mut Player), Without<Guard>>,
-    mut guards: Query<(&Body, &mut Guard), Without<Player>>,
+    mut guards: Query<(&Body, &mut Guard), (Without<Player>, Without<Olga>)>,
+    mut olgas: Query<(&Body, &mut Olga), (Without<Player>, Without<Guard>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let Ok((sb, mut player)) = snake.single_mut() else { return };
@@ -94,6 +96,13 @@ pub fn fly(
             for (gb, mut g) in &mut guards {
                 if let Some(h) = hits_body(b.pos, end, gb.pos, HEIGHT) {
                     g.tranquilize(h > HEAD_HEIGHT);
+                    commands.entity(e).despawn();
+                    continue 'bullets;
+                }
+            }
+            for (ob, mut o) in &mut olgas {
+                if let Some(h) = hits_body(b.pos, end, ob.pos, HEIGHT) {
+                    o.hit(h > HEAD_HEIGHT);
                     commands.entity(e).despawn();
                     continue 'bullets;
                 }
