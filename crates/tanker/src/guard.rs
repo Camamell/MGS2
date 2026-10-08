@@ -38,6 +38,9 @@ use crate::gcl::Spawn;
 use crate::player::{HEIGHT, Player, RADIUS, STEP_UP};
 
 pub const GUARD_ACTOR: u32 = 0xF7F777;
+/// A reinforcement trooper (`cmd_cc9a07`), created by the squad actor
+/// `0x5bb4d4` that the manager's `-a` proc makes when the alert starts.
+pub const TROOPER_ACTOR: u32 = 0xCC9A07;
 /// The enemy manager (`cmd_ddf5ca`): phases and their timers.
 pub const MANAGER_ACTOR: u32 = 0xDDF5CA;
 
@@ -249,6 +252,18 @@ pub fn from_spawn(s: &Spawn, default_vision: f32) -> Option<(Guard, Vec3)> {
 }
 
 impl Guard {
+    /// Arriving in the middle of an alert: straight to the chase.
+    pub fn join_alert(&mut self, last_seen: Option<Vec3>) {
+        self.state = State::Chase;
+        self.last_seen = last_seen;
+        self.meter = METER_MAX;
+    }
+
+    /// Back where he started and nothing to do (a trooper may leave).
+    pub fn idle_at_start(&self) -> bool {
+        matches!(self.state, State::Patrol | State::Wait(_)) && self.node == 0
+    }
+
     pub fn asleep(&self) -> bool {
         matches!(self.state, State::Asleep { .. })
     }
@@ -385,6 +400,11 @@ fn plan(g: &mut Guard, from: Vec3, to: Vec3, game: &Game) {
         _ => vec![to],
     };
     g.repath = 30;
+}
+
+/// Where a route starts (troopers enter there).
+pub fn route_start(game: &Game, route: usize) -> Option<Vec3> {
+    waypoint(game, route, 0).map(|w| Vec3::from(w.position))
 }
 
 fn waypoint(game: &Game, route: usize, node: usize) -> Option<Waypoint> {

@@ -92,12 +92,17 @@ pub fn pistol_grip() -> Quat {
 pub const RIGHT_HAND: usize = 6;
 
 pub fn hold(
+    mut commands: Commands,
     game: Res<Game>,
     bodies: Query<(&Body, Option<&crate::player::Player>), Without<Held>>,
-    mut held: Query<(&Held, &mut Transform, &mut Visibility)>,
+    mut held: Query<(Entity, &Held, &mut Transform, &mut Visibility)>,
 ) {
-    for (h, mut t, mut vis) in &mut held {
-        let Ok((b, player)) = bodies.get(h.owner) else { continue };
+    for (e, h, mut t, mut vis) in &mut held {
+        let Ok((b, player)) = bodies.get(h.owner) else {
+            // Its owner has gone (a trooper who left).
+            commands.entity(e).despawn();
+            continue;
+        };
         let model = &game.data.models[b.model].1;
         let motion = b.motions.and_then(|m| game.data.motions[m].1.motions.get(b.motion));
         let Some(hand) = anim::pose(model, motion, b.frame, false).get(h.object).copied() else { continue };

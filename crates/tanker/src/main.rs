@@ -173,6 +173,11 @@ pub struct Game {
     pub codec_calls: Vec<(i32, u32, Option<u32>)>,
     /// Procs of finished calls, to run.
     pub codec_then: Vec<u32>,
+    /// The enemy manager's `-a` proc, run when an alert starts (it brings
+    /// in reinforcements).
+    pub on_alert: Option<u32>,
+    /// Troopers on their way: (spawn, seconds until they arrive).
+    pub arrivals: Vec<(gcl::Spawn, f32)>,
     /// Spoken line playing: (id, proc to run after, seconds left).
     pub speech: Option<(u32, Option<u32>, f32)>,
     /// Digital camera targets and the proc run after each photo.
@@ -409,6 +414,7 @@ fn prepare(
     let mut sliding = Vec::new();
     let mut bosses = Vec::new();
     let mut crowd = Vec::new();
+    let mut on_alert = None;
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
     let mut photos = (Vec::new(), None);
@@ -449,7 +455,12 @@ fn prepare(
                 start = (Vec3::new(x as f32, y as f32, z as f32), p.opt_int(b'd', 1).unwrap_or(start.1));
             }
         }
-        phase = Phase::from_manager(vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR));
+        let manager = vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR);
+        phase = Phase::from_manager(manager);
+        on_alert = manager.and_then(|s| match s.opt(b'a')?.first()? {
+            gcl::Val::Proc(p) => Some(*p),
+            _ => None,
+        });
         traps = vm.traps.iter().map(|t| (t.clone(), false)).collect();
         props = vm.spawns.iter().filter(|s| PROP_ACTORS.contains(&s.kind)).filter_map(|s| prop(s, &data)).collect();
         props.extend(vm.spawns.iter().filter(|s| s.kind == DOOR_ACTOR).flat_map(|s| door_props(s, &data)));
@@ -530,6 +541,8 @@ fn prepare(
         codec_area: None,
         codec_calls: Vec::new(),
         codec_then: Vec::new(),
+        on_alert,
+        arrivals: Vec::new(),
         speech: None,
         photos: photos.0,
         photo_done: photos.1,
@@ -683,7 +696,7 @@ fn main() -> Result<()> {
         .add_systems(Startup, photo::setup_hud)
         .add_systems(
             Update,
-            (photo::control.before(player::control), photo::view.after(player::follow_camera), codec_followup.after(codec::input), speech)
+            (photo::control.before(player::control), photo::view.after(player::follow_camera), codec_followup.after(codec::input), speech, reinforcements.after(guard::think))
                 .run_if(codec::idle)
                 .run_if(demo::idle),
         )
@@ -915,6 +928,7 @@ fn script_event(
     let (load, spawns, codec, banks) = vm.finish();
     game.cameras.apply(&spawns);
     apply_codec(game, &codec);
+    game.arrivals.extend(spawns.into_iter().filter(|s| s.kind == guard::TROOPER_ACTOR).map(|s| (s, TROOPER_DELAY)));
     let Some(mut next) = load else {
         game.banks = banks;
         return;
@@ -1217,6 +1231,98 @@ fn speech(
     }
 }
 
+/// Seconds before troopers arrive after the alert (the squad's `-w`, 180
+/// frames in w00a; default 0xf0).
+const TROOPER_DELAY: f32 = 3.0;
+
+/// A reinforcement trooper and where he came in.
+#[derive(Component)]
+struct Trooper {
+    entry: Vec3,
+}
+
+/// Reinforcements: the manager's `-a` proc when an alert starts (once
+/// while troopers are still around), troopers arriving after their delay,
+/// and leaving through their entry once the alert is over.
+#[allow(clippy::too_many_arguments)]
+fn reinforcements(
+    mut commands: Commands,
+    time: Res<Time>,
+    session: Res<Session>,
+    phase: Res<Phase>,
+    mut game: ResMut<Game>,
+    mut last: Local<guard::PhaseKind>,
+    troopers: Query<(Entity, &Trooper, &Guard, &Body)>,
+    level: LevelRoots,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let entered = *last != guard::PhaseKind::Alert && phase.kind == guard::PhaseKind::Alert;
+    *last = phase.kind;
+    if entered && troopers.is_empty() && game.arrivals.is_empty()
+        && let Some(p) = game.on_alert
+    {
+        info!("alert: running {p:#x} (reinforcements)");
+        script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[]), &level, &bullets);
+    }
+    // Leaving once the alert and evasion are over.
+    if matches!(phase.kind, guard::PhaseKind::Caution | guard::PhaseKind::Infiltration) {
+        for (e, t, g, b) in &troopers {
+            if g.idle_at_start() && b.pos.distance(t.entry) < 800.0 {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let dt = time.delta_secs();
+    let mut due = Vec::new();
+    game.arrivals.retain_mut(|(s, left)| {
+        *left -= dt;
+        if *left <= 0.0 {
+            due.push(s.clone());
+        }
+        *left > 0.0
+    });
+    if due.is_empty() {
+        return;
+    }
+    let data = &game.data;
+    let (Some(model), motions) = (model_index(data, "gbs_def"), motions_index(data, "gbs")) else { return };
+    let gun = model_index(data, "aks");
+    let mut cache = MaterialCache { cull: session.cull, ..default() };
+    for s in due {
+        let Some((mut g, mut pos)) = guard::from_spawn(&s, 6000.0) else { continue };
+        if s.opt(b'd').is_none() {
+            let Some(start) = guard::route_start(&game, g.route) else { continue };
+            pos = start;
+        }
+        if let Some(y) = game.collision.as_ref().and_then(|c| c.floor_below(pos.x, pos.z, pos.y + 1000.0)) {
+            pos.y = y;
+        }
+        if phase.kind == guard::PhaseKind::Alert {
+            g.join_alert(phase.last_seen);
+        }
+        info!("trooper arrives at {pos} (route {})", g.route);
+        let e = scene::spawn_model(
+            &mut commands,
+            &data.models[model].1,
+            data,
+            &mut cache,
+            &mut meshes,
+            &mut images,
+            &mut materials,
+            true,
+            (Body::new(pos, 0.0, model, motions), LevelEntity),
+        );
+        commands.entity(e).insert((g, Trooper { entry: pos }));
+        if let Some(m) = gun {
+            let w = scene::spawn_model(&mut commands, &data.models[m].1, data, &mut cache, &mut meshes, &mut images, &mut materials, true, LevelEntity);
+            commands.entity(w).insert(body::Held { owner: e, object: body::RIGHT_HAND, when_aiming: false, grip: body::rifle_grip() });
+        }
+    }
+}
+
 /// `--press-at`: action button presses at these times (seconds).
 #[derive(Resource)]
 struct AutoPress(Vec<f32>);
@@ -1283,10 +1389,11 @@ fn game_over(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     session: Res<Session>,
-    game: Res<Game>,
+    mut game: ResMut<Game>,
     mut phase: ResMut<Phase>,
     mut player: Query<(&mut Player, &mut Body), Without<Guard>>,
     mut guards: Query<&mut Guard>,
+    troopers: Query<Entity, With<Trooper>>,
     bullets: Query<Entity, With<bullet::Bullet>>,
 ) {
     let Ok((mut p, mut body)) = player.single_mut() else { return };
@@ -1301,9 +1408,10 @@ fn game_over(
     for mut g in &mut guards {
         g.reset();
     }
-    for e in &bullets {
+    for e in bullets.iter().chain(troopers.iter()) {
         commands.entity(e).despawn();
     }
+    game.arrivals.clear();
 }
 
 fn hud(

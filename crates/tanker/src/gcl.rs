@@ -74,8 +74,10 @@ pub mod trap_event {
 
 /// Actors that call one of their proc options as soon as they are created,
 /// as far as stage setup needs: `0xddf5ca` (enemy manager; `-w` creates the
-/// "wccomm" actor) and `0x59eda8` "wccomm" (`-e` creates the guards).
-const CALL_ON_CREATE: &[(u32, u8)] = &[(0xDDF5CA, b'w'), (0x59EDA8, b'e')];
+/// "wccomm" actor), `0x59eda8` "wccomm" (`-e` creates the guards) and
+/// `0x5bb4d4` (a reinforcement squad, `FUN_0029dcb8`: `-e` creates its
+/// troopers).
+const CALL_ON_CREATE: &[(u32, u8)] = &[(0xDDF5CA, b'w'), (0x59EDA8, b'e'), (0x5BB4D4, b'e')];
 /// Difficulty (bank B s16): 10 very easy ... 50 extreme.
 pub const DIFFICULTY: u16 = 0x8;
 /// Story marker (bank A u32) set by the stage that sent Snake here.

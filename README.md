@@ -93,7 +93,9 @@ What works:
 - Guards see, hear running, investigate, raise the alert, chase along the
   navigation graph and shoot (aim, bursts, reloads as in the game's code).
   Darted or punched guards fall asleep and later return to their route;
-  guards who find them wake them and raise caution.
+  guards who find them wake them and raise caution. An alert brings in the
+  stage's reinforcements (its own script proc), who leave again once the
+  alert is over.
 - Snake's life follows the difficulty (200/150/100/75/50); he collapses with
   his own death motion at zero.
 - Doors and traps run the stage script's own handlers, so walking through a
@@ -179,5 +181,5 @@ Other options: `--collision`, `--lit`, `--browse <index>`,
    - since: items and weapons, hold-ups, traps, stage cameras, Codec,
      hanging, Olga, cutscene subtitles, the holds' photo finale: the Tanker
      can be played from the deck to its end
-   - next: reinforcements and radio reports, Olga's sequence selector,
+   - next: radio reports, the troopers' own brain, Olga's sequence selector,
      cutscene scenes, the Marines' variants and reactions, voice timing

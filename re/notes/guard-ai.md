@@ -84,10 +84,29 @@ yet; guards visit navigation nodes around the last known position instead.
 Phase is mirrored to Bs16:0x112 (0 infiltration, 1 alert, 2 evasion, 3
 caution).
 
+## Reinforcements
+
+- The manager's `-a` proc runs when an alert starts; in w00a it is
+  `chara #5bb4d4 -e proc:#8dfc0c -w 180 -a 300 -s 1`, a squad actor
+  (`cmd_5bb4d4` at 0x29E0A0). Its init (`FUN_0029ddd0`) calls every `-e`
+  proc at once (`FUN_0029dcb8` -> `FUN_00152ca0`), which create the
+  troopers: `chara #cc9a07 <name> -r <route> -i <vision> -l -f -s -c -q
+  proc n -e 0` (route 5 in w00a, entering at its first point). `-w`
+  (default 0xf0 frames) is kept at +0x238 and counts down before the squad
+  acts; `-a` is read only during evasion (+0x23C).
+- The squad's act (`FUN_0029d9a8`) follows the phase (Bs16:0x112): alert
+  `FUN_0029d348` / `FUN_0029d040` (leader and followers,
+  `FUN_0029d360`), evasion `FUN_0029bd90` / `FUN_0029c1a0`..., caution and
+  infiltration end it.
+- Port: the troopers arrive 3 s after the alert starts with the alert AI,
+  search with the others in evasion, and walk back to their entry and leave
+  once caution begins. Their own brain (`cmd_cc9a07`) and the squad's
+  formation are not ported.
+
 ## Not yet ported
 
 - the per-guard "!" length (from the action's motion);
-- close-quarters sub-states, radio reports, reinforcements;
+- close-quarters sub-states, radio reports; the troopers' own brain;
 - noise, footprints and bodies as stimuli;
 - the game's precomputed shortest-path matrices in the `.hzx` (paths are
   recomputed from the node links instead).

@@ -237,10 +237,6 @@ pub fn control(
     mode.message_for -= dt;
     mode.flash = (mode.flash - dt * 3.0).max(0.0);
     let Ok((mut body, mut p)) = player.single_mut() else { return };
-    if game.photos.is_empty() || p.dead() {
-        mode.active = false;
-        return;
-    }
     let mut shoot = keys.just_pressed(KeyCode::KeyF);
     if let Some(mut a) = auto {
         let now = time.elapsed_secs();
@@ -261,6 +257,10 @@ pub fn control(
                 a.1 = Some(now + 0.5);
             }
         }
+    }
+    if game.photos.is_empty() || p.dead() {
+        mode.active = false;
+        return;
     }
     if keys.just_pressed(KeyCode::KeyC) {
         mode.active = !mode.active;
