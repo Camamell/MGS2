@@ -281,7 +281,7 @@ impl<'a> Vm<'a> {
             let area = self.hash(a.first(), args);
             let actor = self.hash(a.get(1), args);
             let mode = self.hash(opt(b'm').and_then(|v| v.first()), args);
-            let dir = opt(b'd').map(|v| v.clone()).map(|v| {
+            let dir = opt(b'd').cloned().map(|v| {
                 let d = v.first().map_or(0, |x| self.value(x, args).int().unwrap_or(0));
                 let r = v.get(1).map_or(0x400, |x| self.value(x, args).int().unwrap_or(0x400));
                 (d, r)
@@ -303,11 +303,10 @@ impl<'a> Vm<'a> {
             None
         } else if is("command") {
             // `command <id> <map> -s { ... }`: the setup block runs now.
-            if let Some((_, v)) = options.iter().find(|(l, _)| *l == b's') {
-                if let Some(Value::Block(b)) = v.first() {
+            if let Some((_, v)) = options.iter().find(|(l, _)| *l == b's')
+                && let Some(Value::Block(b)) = v.first() {
                     return self.block(b, args);
                 }
-            }
             // Other commands' results are not modelled; read as 0.
             self.last = 0;
             None

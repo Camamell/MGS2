@@ -134,7 +134,7 @@ pub fn parse(data: &[u8]) -> Result<Mar> {
 }
 
 fn rotation_keys(data: &[u8], at: usize, length: u32) -> Result<Vec<RotKey>> {
-    if at % 2 != 0 {
+    if !at.is_multiple_of(2) {
         return format_err("mar: misaligned track");
     }
     let mut bits = Bits { d: data, word: at / 2, bit: 0 };

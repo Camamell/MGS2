@@ -357,11 +357,10 @@ fn prepare(
         let last = |i: usize| soldiers[i + 1..].iter().all(|o| actor(o) != actor(soldiers[i]));
         for s in (0..soldiers.len()).filter(|i| last(*i)).map(|i| soldiers[i]) {
             if let (Some((g, mut p)), Some(m)) = (guard::from_spawn(s, 6000.0), gm) {
-                if let Some(col) = &collision {
-                    if let Some(y) = col.floor_below(p.x, p.z, p.y + 1000.0) {
+                if let Some(col) = &collision
+                    && let Some(y) = col.floor_below(p.x, p.z, p.y + 1000.0) {
                         p.y = y;
                     }
-                }
                 guards.push((g, m, gmar, p));
             }
         }
@@ -408,11 +407,10 @@ fn prepare(
     }
 
     let mut pos = start.0;
-    if let Some(col) = &collision {
-        if let Some(y) = col.floor_below(pos.x, pos.z, pos.y + 2000.0) {
+    if let Some(col) = &collision
+        && let Some(y) = col.floor_below(pos.x, pos.z, pos.y + 2000.0) {
             pos.y = y;
         }
-    }
     let yaw = start.1 as f32 / 4096.0 * std::f32::consts::TAU;
     let snake = model_index(&data, "sna_def").map(|m| (m, motions_index(&data, "snake"), pos, yaw));
     let mut game = Game {
@@ -447,13 +445,12 @@ fn main() -> Result<()> {
     banks.set_b16(gcl::DIFFICULTY, cli.difficulty);
     // The title screen's script opens with the per-difficulty settings
     // (guard vision ranges As16:0x1bc.., timers); run just that statement.
-    if let Some(title) = stage::script(&mut disc, "n_title")? {
-        if let Some(first) = title.main.first() {
+    if let Some(title) = stage::script(&mut disc, "n_title")?
+        && let Some(first) = title.main.first() {
             let mut vm = gcl::Vm::with_banks(&title, banks);
             vm.run(std::slice::from_ref(first));
             banks = vm.banks();
         }
-    }
     let from = cli.from.clone().or_else(|| (cli.stage == "w00a").then(|| "d01t".to_string()));
     let arrival = match from.as_deref() {
         Some("none") | None => None,
@@ -591,11 +588,10 @@ fn spawn_level(
 ) {
     let cast = new.0.lock().unwrap().take();
     // After a stage change, look over Snake's shoulder the way he faces.
-    if std::mem::replace(&mut *first, true) {
-        if let (Some((_, _, _, yaw)), Ok(mut cam)) = (cast.as_ref().and_then(|c| c.snake), cams.single_mut()) {
+    if std::mem::replace(&mut *first, true)
+        && let (Some((_, _, _, yaw)), Ok(mut cam)) = (cast.as_ref().and_then(|c| c.snake), cams.single_mut()) {
             cam.yaw = yaw + std::f32::consts::PI;
         }
-    }
     commands.remove_resource::<NewCast>();
     let Some(cast) = cast else { return };
     let mut cache = MaterialCache::default();

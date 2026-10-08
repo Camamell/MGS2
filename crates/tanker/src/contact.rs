@@ -45,13 +45,12 @@ pub fn separate(
                 push[j] -= p;
             }
         }
-        if let Some(s) = snake_pos {
-            if let Some(p) = apart(s, bodies[i].0) {
+        if let Some(s) = snake_pos
+            && let Some(p) = apart(s, bodies[i].0) {
                 // Snake gives way more than a planted guard.
                 snake_push += p * 1.5;
                 push[i] -= p * 0.5;
             }
-        }
     }
     let settle = |pos: Vec3, d: Vec2| -> Vec3 {
         let mut p = pos + Vec3::new(d.x, 0.0, d.y);
@@ -69,11 +68,10 @@ pub fn separate(
             body.0 = b.pos;
         }
     }
-    if snake_push != Vec2::ZERO {
-        if let Ok(mut b) = snake.single_mut() {
+    if snake_push != Vec2::ZERO
+        && let Ok(mut b) = snake.single_mut() {
             b.pos = settle(b.pos, snake_push);
         }
-    }
 }
 
 /// `--punch-at`: punch at these times (seconds), for automated tests.

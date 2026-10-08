@@ -23,7 +23,7 @@ pub struct MaterialCache {
 
 pub fn alpha_mode(t: &Texture) -> AlphaMode {
     let (mut cut, mut partial) = (false, false);
-    for a in t.rgba.chunks_exact(4).map(|p| p[3]) {
+    for a in t.rgba.as_chunks::<4>().0.iter().map(|p| p[3]) {
         match a {
             0..=8 => cut = true,
             247..=255 => {}

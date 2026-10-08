@@ -529,11 +529,10 @@ pub fn think(
 
     // Kicked awake: up at once.
     for e in woken {
-        if let Ok((_, mut g, _)) = guards.get_mut(e) {
-            if let State::Asleep { wake, .. } = g.state {
+        if let Ok((_, mut g, _)) = guards.get_mut(e)
+            && let State::Asleep { wake, .. } = g.state {
                 g.state = State::Asleep { delay: 0.0, timer: wake, wake };
             }
-        }
     }
 
     manager(&mut phase, highest);
@@ -713,7 +712,7 @@ fn alert_brain(
             a.reload = RELOAD_FRAMES;
             a.firing = false;
             a.aim = 0.0;
-        } else if rng.next() % 3 == 0 {
+        } else if rng.next().is_multiple_of(3) {
             // Burst over: aim again.
             a.firing = false;
             a.aim = 0.0;

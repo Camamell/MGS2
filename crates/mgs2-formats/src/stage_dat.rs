@@ -58,7 +58,7 @@ impl<R: Read + Seek> StageDat<R> {
         cipher.apply(&mut toc);
 
         let mut stages: Vec<StageEntry> = toc
-            .chunks_exact(12)
+            .as_chunks::<12>().0.iter()
             .map(|e| StageEntry {
                 name: String::from_utf8_lossy(&e[..8]).trim_end_matches('\0').to_string(),
                 sector: le32(e, 8),

@@ -96,7 +96,7 @@ impl GsMem {
 
     /// Host-to-local transfer in PSMCT32 starting at (0,0) of the buffer.
     pub fn upload32(&mut self, bp: u32, bw: u32, width: u32, data: &[u8]) {
-        for (i, px) in data.chunks_exact(4).enumerate() {
+        for (i, px) in data.as_chunks::<4>().0.iter().enumerate() {
             let (x, y) = (i as u32 % width, i as u32 / width);
             let a = Self::word_addr32(bp, bw, x, y);
             self.mem[a..a + 4].copy_from_slice(px);

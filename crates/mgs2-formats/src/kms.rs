@@ -105,7 +105,7 @@ impl Reader<'_> {
     fn i16x(&self, o: usize, n: usize) -> Result<Vec<i16>> {
         self.0
             .get(o..o + n * 2)
-            .map(|b| b.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect())
+            .map(|b| b.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes([c[0], c[1]])).collect())
             .ok_or_else(|| crate::Error::Format(format!("kms: array past end at {o:#x}")))
     }
 }
@@ -149,14 +149,14 @@ fn parse_mesh(r: &Reader, mo: usize) -> Result<Mesh> {
     };
     let pos = r.i16x(ptr(0)?, n * 4)?;
     let s = 1.0 / 4096.0;
-    for v in pos.chunks_exact(4) {
+    for v in pos.as_chunks::<4>().0 {
         mesh.positions.push([v[0] as f32, v[1] as f32, v[2] as f32]);
         mesh.position_w.push(v[3]);
     }
     let mut restart = vec![false; n];
     if ptr(1)? != 0 {
         let nrm = r.i16x(ptr(1)?, n * 4)?;
-        for (i, v) in nrm.chunks_exact(4).enumerate() {
+        for (i, v) in nrm.as_chunks::<4>().0.iter().enumerate() {
             mesh.normals.push([v[0] as f32 * s, v[1] as f32 * s, v[2] as f32 * s]);
             restart[i] = v[3] < 0;
         }
@@ -164,7 +164,7 @@ fn parse_mesh(r: &Reader, mo: usize) -> Result<Mesh> {
     for (slot, dst) in [(2, &mut mesh.uvs), (3, &mut mesh.uvs2)] {
         if ptr(slot)? != 0 {
             let uv = r.i16x(ptr(slot)?, n * 2)?;
-            dst.extend(uv.chunks_exact(2).map(|c| [c[0] as f32 * s, c[1] as f32 * s]));
+            dst.extend(uv.as_chunks::<2>().0.iter().map(|c| [c[0] as f32 * s, c[1] as f32 * s]));
         }
     }
     // Strips: a triangle ends at every vertex not flagged as a restart; the
