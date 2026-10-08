@@ -327,6 +327,32 @@ fn slide_doors(
     }
 }
 
+/// The New York skyline seen from the deck: `manhat3d.c` (`#1e44b7`,
+/// `FUN_00305db8`) puts six copies of model 0x198aa2 at x -130000, then
+/// -160000 in 20 m steps; `brooklyn.c` (`#d6ed95`, `FUN_00306748`) six of
+/// 0x198b62 at x 130000, then 150000 in 10 m steps (y from `-h`, else 0;
+/// z 0). The models are 1:128 miniatures (the actors keep a 128 scale); the
+/// skyline is drawn at the same angle of view but closer: scaled and moved
+/// out by `SKYLINE_SCALE`, within the camera's far plane. Their per-frame
+/// movement is not ported.
+fn skyline(s: &gcl::Spawn, data: &StageData) -> Vec<Prop> {
+    let (model, xs): (u32, [f32; 6]) = match s.kind {
+        0x1E44B7 => (0x198AA2, [-130000.0, -160000.0, -180000.0, -200000.0, -220000.0, -240000.0]),
+        0xD6ED95 => (0x198B62, [130000.0, 150000.0, 160000.0, 170000.0, 180000.0, 190000.0]),
+        _ => return Vec::new(),
+    };
+    let Some(idx) = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == model) else { return Vec::new() };
+    let y = s.opt_int(b'h', 0).unwrap_or(0) as f32;
+    xs.iter()
+        .map(|x| Prop {
+            model: idx,
+            transform: Transform::from_translation(Vec3::new(*x, y, 0.0) * SKYLINE_SCALE * SCALE).with_scale(Vec3::splat(SKYLINE_SCALE)),
+        })
+        .collect()
+}
+
+const SKYLINE_SCALE: f32 = 6.0;
+
 fn prop(s: &gcl::Spawn, data: &StageData) -> Option<Prop> {
     // `-f` bit 0x100 marks helpers that are never drawn (e.g. the stretched
     // `w04_test_bou` poles).
@@ -483,6 +509,7 @@ fn prepare(
         traps = vm.traps.iter().map(|t| (t.clone(), false)).collect();
         props = vm.spawns.iter().filter(|s| PROP_ACTORS.contains(&s.kind)).filter_map(|s| prop(s, &data)).collect();
         props.extend(vm.spawns.iter().filter(|s| s.kind == DOOR_ACTOR).flat_map(|s| door_props(s, &data)));
+        props.extend(vm.spawns.iter().flat_map(|s| skyline(s, &data)));
         sliding = vm.spawns.iter().filter(|s| s.kind == SLIDING_DOOR).filter_map(|s| sliding_door(s, &data)).collect();
         bosses = vm
             .spawns
