@@ -19,14 +19,30 @@ pub struct Body {
     pub motions: Option<usize>,
     pub motion: usize,
     pub frame: f32,
+    /// Stop on the last frame instead of looping.
+    pub once: bool,
 }
 
 impl Body {
-    /// Switches motion, restarting it only when it changes.
+    pub fn new(pos: Vec3, yaw: f32, model: usize, motions: Option<usize>) -> Self {
+        Self { pos, yaw, model, motions, motion: 0, frame: 0.0, once: false }
+    }
+
+    /// Switches to a looping motion, restarting it only when it changes.
     pub fn play(&mut self, motion: usize) {
-        if self.motion != motion {
+        if self.motion != motion || self.once {
             self.motion = motion;
             self.frame = 0.0;
+            self.once = false;
+        }
+    }
+
+    /// Plays a motion once and holds its last frame.
+    pub fn play_once(&mut self, motion: usize) {
+        if self.motion != motion || !self.once {
+            self.motion = motion;
+            self.frame = 0.0;
+            self.once = true;
         }
     }
 
@@ -56,11 +72,14 @@ pub fn skin(
 ) {
     let dt = time.delta_secs().min(0.05);
     for (e, mut b, mut t) in &mut bodies {
-        b.frame += dt * 60.0;
         t.translation = b.pos * SCALE;
         t.rotation = Quat::from_rotation_y(b.yaw);
         let model = &game.data.models[b.model].1;
         let motion = b.motions.and_then(|m| game.data.motions[m].1.motions.get(b.motion));
+        b.frame += dt * 60.0;
+        if let (true, Some(m)) = (b.once, motion) {
+            b.frame = b.frame.min(m.length.saturating_sub(1) as f32);
+        }
         let mats = anim::pose(model, motion, b.frame, false);
         for child in children.iter_descendants(e) {
             let Ok((part, mesh3d)) = parts.get(child) else { continue };

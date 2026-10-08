@@ -415,7 +415,11 @@ pub fn think(
                 body.yaw += (delay / 20.0).sin() * dt;
                 g.state = State::Asleep { delay: delay - frames, timer, wake };
             } else if timer < wake {
-                body.play(if timer < sleep::FALL_FRAMES { sleep::FALL } else { sleep::LIE });
+                if timer < sleep::FALL_FRAMES {
+                    body.play_once(sleep::FALL);
+                } else {
+                    body.play(sleep::LIE);
+                }
                 g.state = State::Asleep { delay: 0.0, timer: timer + frames, wake };
             } else {
                 g.last_seen = None;

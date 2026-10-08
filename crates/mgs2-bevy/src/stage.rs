@@ -67,7 +67,8 @@ pub struct StageData {
 
 impl StageData {
     /// Motion archives usable with a model, best match first: joint count
-    /// not above the model's object count, closest first.
+    /// closest to the model's object count (joints the model lacks, or
+    /// objects the motion lacks, are left alone).
     pub fn motion_sets_for(&self, model: &kms::Model) -> Vec<usize> {
         let objects = model.objects.len();
         // Closest joint count first; among equals, the archive with the most
@@ -78,7 +79,7 @@ impl StageData {
             .enumerate()
             .filter_map(|(i, (_, m))| {
                 let joints = m.motions.iter().map(|x| x.joints.len()).max()?;
-                (joints > 1 && joints <= objects).then(|| (objects - joints, std::cmp::Reverse(m.motions.len()), i))
+                (joints > 1).then(|| (objects.abs_diff(joints), std::cmp::Reverse(m.motions.len()), i))
             })
             .collect();
         v.sort();

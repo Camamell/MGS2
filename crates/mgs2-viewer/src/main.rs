@@ -56,6 +56,10 @@ struct Cli {
     /// Hold the motion at this frame instead of playing it.
     #[arg(long)]
     frame: Option<f32>,
+    /// Use this motion archive (hex name hash, e.g. 6891cc for snake.mar)
+    /// instead of the best guess.
+    #[arg(long)]
+    archive: Option<String>,
     /// Apply joint quaternions conjugated (handedness experiment).
     #[arg(long)]
     conj: bool,
@@ -144,6 +148,13 @@ fn main() -> Result<()> {
         }
         None => cli.browse,
     };
+    let archive = match &cli.archive {
+        Some(h) => {
+            let h = u32::from_str_radix(h.trim_start_matches("0x"), 16).context("--archive takes a hex hash")?;
+            Some(data.motions.iter().position(|(m, _)| *m == h).context("no motion archive with that hash")?)
+        }
+        None => None,
+    };
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -165,7 +176,7 @@ fn main() -> Result<()> {
         reframe: true,
         ground_view: false,
         anim: Anim {
-            set: None,
+            set: archive,
             motion: cli.motion.unwrap_or(0),
             frame: cli.frame.unwrap_or(0.0),
             playing: cli.frame.is_none(),

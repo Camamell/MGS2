@@ -18,6 +18,8 @@ pub mod motion {
     pub const WALK: usize = 17;
     pub const RUN: usize = 18;
     pub const CROUCH_WALK: usize = 53;
+    /// Collapsing onto his side (270 frames, hip 860 -> 160 mm).
+    pub const DEATH: usize = 13;
 }
 
 /// Travel speeds measured from those motions' root tracks (mm/s).
@@ -124,7 +126,7 @@ pub fn control(
     p.hurt = (p.hurt - dt).max(0.0);
     if p.dead() {
         p.speed = 0.0;
-        body.play(motion::IDLE);
+        body.play_once(motion::DEATH);
         return;
     }
 
@@ -231,6 +233,14 @@ pub fn control(
     });
 }
 
+/// Level walls are mostly single-sided; let camera rays hit them from
+/// either side so the camera cannot slip behind one.
+pub fn two_sided_rays(mut commands: Commands, parts: Query<Entity, Added<mgs2_bevy::scene::Part>>) {
+    for e in &parts {
+        commands.entity(e).insert(bevy::picking::mesh_picking::ray_cast::RayCastBackfaces);
+    }
+}
+
 /// Orbiting follow camera: right mouse drag or Q/E to turn.
 pub fn follow_camera(
     time: Res<Time>,
@@ -295,7 +305,7 @@ pub fn follow_camera(
             let offset = cam - target;
             let mut d = offset.length();
             if let Some(t) = obstacle(target, cam) {
-                d = (d * t - 0.3).max(0.8);
+                d = (d * t - 0.3).max(0.25);
             }
             // Outside the playable area there are no walls to stop the
             // camera, so also require floor under it.

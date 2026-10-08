@@ -453,6 +453,7 @@ fn main() -> Result<()> {
             items::sync_rations,
             game_over,
             body::skin,
+            player::two_sided_rays,
             player::follow_camera,
             toggles,
             doors,
@@ -561,13 +562,13 @@ fn spawn_level(
     };
     match cast.snake {
         Some((model, motions, pos, yaw)) => {
-            let e = spawn(&mut commands, model, Body { pos, yaw, model, motions, motion: 0, frame: 0.0 });
+            let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
             commands.entity(e).insert(Player::new(session.difficulty));
         }
         None => error!("Snake's model (sna_def) not found"),
     }
     for (g, model, motions, pos) in cast.guards {
-        let e = spawn(&mut commands, model, Body { pos, yaw: 0.0, model, motions, motion: 0, frame: 0.0 });
+        let e = spawn(&mut commands, model, Body::new(pos, 0.0, model, motions));
         commands.entity(e).insert(g);
     }
 }
