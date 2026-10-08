@@ -41,6 +41,10 @@ use crate::gcl::Spawn;
 use crate::player::Player;
 
 pub const OLGA_ACTOR: u32 = 0x7798F6;
+
+/// `--boss-down-at`: take her stamina at this time (seconds), for tests.
+#[derive(Resource)]
+pub struct DownAt(pub f32);
 /// Load address of a stage's resident image.
 const RESIDENT_BASE: u32 = 0x001F_1480;
 
@@ -89,10 +93,16 @@ pub struct Olga {
     moved_last: bool,
     unknown: Vec<u32>,
     traced: u32,
+    /// `-h` callback 1 (`#e5ee1f` in w00b): run when she is beaten; it
+    /// ends the fight (camera, then the next cutscene).
+    pub on_down: Option<u32>,
+    /// Seconds since she went down; the callback runs once.
+    pub down_for: f32,
+    pub reported: bool,
 }
 
 impl Olga {
-    pub fn new() -> Self {
+    pub fn new(on_down: Option<u32>) -> Self {
         Self {
             stamina: 100,
             ptr: table::START,
@@ -107,6 +117,9 @@ impl Olga {
             moved_last: false,
             unknown: Vec::new(),
             traced: 0,
+            on_down,
+            down_for: 0.0,
+            reported: false,
         }
     }
 
@@ -125,6 +138,14 @@ impl Olga {
     pub fn down(&self) -> bool {
         self.stamina <= 0
     }
+}
+
+/// The `-h` callback procs.
+pub fn callbacks(s: &Spawn) -> Vec<u32> {
+    s.opt(b'h').unwrap_or(&[]).iter().filter_map(|v| match v {
+        crate::gcl::Val::Proc(p) => Some(*p),
+        _ => None,
+    }).collect()
 }
 
 /// (model hash, motion archive hash, position, facing in radians).
@@ -159,12 +180,17 @@ pub fn think(
     snake: Query<(&Body, &Player), Without<Olga>>,
     mut olgas: Query<(&mut Olga, &mut Body)>,
     trace: Option<Res<crate::guard::Trace>>,
+    down_at: Option<Res<DownAt>>,
 ) {
     let Some(img) = game.data.resident.as_deref() else { return };
     let dt = time.delta_secs().min(0.05);
     let Ok((sb, player)) = snake.single() else { return };
     let target = Target { feet: sb.pos, chest: sb.pos + Vec3::Y * (player.height() * 0.6), dead: player.dead() };
     for (mut o, mut b) in &mut olgas {
+        if down_at.as_ref().is_some_and(|d| time.elapsed_secs() >= d.0) && !o.down() {
+            o.stamina = 1;
+            o.hit(false);
+        }
         b.yaw = turn_toward(b.yaw, o.target_yaw, TURN_RATE * dt);
         // Run instant steps until one waits (bounded, as a safety net).
         for _ in 0..16 {
@@ -182,6 +208,9 @@ pub fn think(
             eprintln!("olga: ptr {:#x} step {:#x} timer {} rounds {} pos ({:.0},{:.0},{:.0}) motion {}", o.ptr, word(img, o.ptr).unwrap_or(0), o.timer, o.rounds, b.pos.x, b.pos.y, b.pos.z, b.motion);
         }
         o.hit = false;
+        if o.down() {
+            o.down_for += dt;
+        }
         if let (true, Some(d)) = (o.speed > 0.0, o.dest) {
             let to = Vec2::new(d.x - b.pos.x, d.z - b.pos.z);
             let v = to.normalize_or_zero() * (o.speed * dt).min(to.length());

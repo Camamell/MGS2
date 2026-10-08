@@ -87,6 +87,9 @@ struct Cli {
     /// Press Space (grab a ledge / pull up) at this time (seconds).
     #[arg(long)]
     hang_at: Option<f32>,
+    /// Knock the boss out at this time (seconds), for tests.
+    #[arg(long)]
+    boss_down_at: Option<f32>,
     /// Call the Codec (as if K were pressed) at this time (seconds).
     #[arg(long)]
     codec_at: Option<f32>,
@@ -203,7 +206,7 @@ struct Cast {
     items: Vec<(items::Item, usize)>,
     sliding: Vec<(Prop, SlidingDoor)>,
     /// Bosses: (model, motions, position, facing).
-    bosses: Vec<(usize, Option<usize>, Vec3, f32)>,
+    bosses: Vec<(usize, Option<usize>, Vec3, f32, Option<u32>)>,
 }
 
 /// A static model placed by the script: `chara 0x7a8ec1` (scenery such as
@@ -430,14 +433,14 @@ fn prepare(
             .spawns
             .iter()
             .filter(|s| s.kind == olga::OLGA_ACTOR)
-            .filter_map(olga::from_spawn)
-            .filter_map(|(m, a, mut p, yaw)| {
+            .filter_map(|s| olga::from_spawn(s).map(|x| (x, olga::callbacks(s).get(1).copied())))
+            .filter_map(|((m, a, mut p, yaw), on_down)| {
                 let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == m)?;
                 let motions = data.motions.iter().position(|(h, _)| *h & 0x00FF_FFFF == a);
                 if let Some(y) = collision.as_ref().and_then(|c| c.floor_below(p.x, p.z, p.y + 100.0)) {
                     p.y = y;
                 }
-                Some((model, motions, p, yaw))
+                Some((model, motions, p, yaw, on_down))
             })
             .collect();
         items = vm
@@ -636,6 +639,7 @@ fn main() -> Result<()> {
         app.insert_resource(c);
     }
     app.add_systems(Update, body::hold.after(body::skin).before(player::follow_camera));
+    app.add_systems(Update, boss_defeat.after(olga::think).run_if(codec::idle).run_if(demo::idle));
     app.add_systems(Update, olga::think.after(guard::think).before(bullet::fly).run_if(codec::idle).run_if(demo::idle));
     if cli.trace {
         app.insert_resource(guard::Trace::default()).add_systems(Update, guard::trace);
@@ -648,6 +652,9 @@ fn main() -> Result<()> {
     }
     if let Some(t) = cli.hang_at {
         app.insert_resource(player::AutoHang(t));
+    }
+    if let Some(t) = cli.boss_down_at {
+        app.insert_resource(olga::DownAt(t));
     }
     if let Some(t) = cli.codec_at {
         app.insert_resource(codec::AutoCall(t));
@@ -759,9 +766,9 @@ fn spawn_level(
         commands.entity(e).insert(g);
         weapons.extend(model_index(data, "aks").map(|m| (e, m, false, body::rifle_grip())));
     }
-    for (model, motions, pos, yaw) in cast.bosses {
+    for (model, motions, pos, yaw, on_down) in cast.bosses {
         let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
-        commands.entity(e).insert(olga::Olga::new());
+        commands.entity(e).insert(olga::Olga::new(on_down));
     }
     for (owner, model, when_aiming, grip) in weapons {
         let m = &data.models[model].1;
@@ -858,7 +865,7 @@ fn script_event(
     let mut banks = banks;
     let (next, cutscene) = {
         let mut disc = session.disc.lock().unwrap();
-        skip_cutscene(&mut disc, &session.iso, next, &mut banks)
+        skip_cutscene(&mut disc, &session.iso, next, &game.data.name, &mut banks)
     };
     if let Some(c) = cutscene.filter(|_| !session.skip_cutscenes) {
         commands.insert_resource(c);
@@ -886,7 +893,13 @@ fn script_event(
 /// Cutscene stages (`d..t`) are not played yet: follow the cutscene's own
 /// exit to the next gameplay stage, with the start position and story
 /// marker its script would set.
-fn skip_cutscene(disc: &mut Disc, iso: &std::path::Path, name: String, banks: &mut gcl::Banks) -> (String, Option<demo::Cutscene>) {
+fn skip_cutscene(
+    disc: &mut Disc,
+    iso: &std::path::Path,
+    name: String,
+    leaving: &str,
+    banks: &mut gcl::Banks,
+) -> (String, Option<demo::Cutscene>) {
     let is_demo = |n: &str| n.starts_with('d') && n.ends_with('t');
     if !is_demo(&name) {
         return (name, None);
@@ -902,7 +915,9 @@ fn skip_cutscene(disc: &mut Disc, iso: &std::path::Path, name: String, banks: &m
         }
         _ => Vec::new(),
     };
-    for target in targets.iter().filter(|t| t.starts_with('w')) {
+    // Not back to the stage being left (a cutscene stage can sit between
+    // two gameplay stages and load either).
+    for target in targets.iter().filter(|t| t.starts_with('w') && t.as_str() != leaving) {
         if let Ok(arrivals) = stage::arrivals(disc, &name, target)
             && let Some(a) = arrivals.first() {
                 set_snake_start(banks, a.entry.position, a.entry.direction);
@@ -928,6 +943,28 @@ fn collect_loads(stmts: &[mgs2_formats::gcx::Stmt], out: &mut Vec<String>) {
                 if let Value::Block(b) = v {
                     collect_loads(b, out);
                 }
+            }
+        }
+    }
+}
+
+/// Olga beaten: after her fall, run her defeat callback, which ends the
+/// fight the way the stage script does.
+fn boss_defeat(
+    mut commands: Commands,
+    session: Res<Session>,
+    mut game: ResMut<Game>,
+    mut olgas: Query<&mut olga::Olga>,
+    level: LevelRoots,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    for mut o in &mut olgas {
+        if o.down() && !o.reported && o.down_for > 3.0 {
+            o.reported = true;
+            if let Some(p) = o.on_down {
+                info!("Olga is down: running {p:#x}");
+                script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[]), &level, &bullets);
+                return;
             }
         }
     }
