@@ -18,6 +18,9 @@ pub mod motion {
     pub const WALK: usize = 17;
     pub const RUN: usize = 18;
     pub const CROUCH_WALK: usize = 53;
+    /// Lying flat, and crawling forward (620 mm per 80 frames).
+    pub const PRONE_IDLE: usize = 7;
+    pub const CRAWL: usize = 8;
     /// Collapsing onto his side (270 frames, hip 860 -> 160 mm).
     pub const DEATH: usize = 13;
     /// Two-handed aiming stance.
@@ -30,6 +33,7 @@ pub mod motion {
 const WALK_SPEED: f32 = 1250.0;
 pub const RUN_SPEED: f32 = 3050.0;
 const CROUCH_SPEED: f32 = 1250.0;
+const CRAWL_SPEED: f32 = 465.0;
 const TURN_RATE: f32 = TAU * 1.5;
 pub const RADIUS: f32 = 300.0;
 pub const HEIGHT: f32 = 1700.0;
@@ -40,6 +44,7 @@ const GRAVITY: f32 = 9800.0;
 pub struct Player {
     pub fall_speed: f32,
     pub crouch: bool,
+    pub prone: bool,
     /// Current horizontal speed (mm/s); guards hear running.
     pub speed: f32,
     /// Life (script Bs16:0xf2, player+0x782) and its maximum (Bs16:0xf4).
@@ -71,6 +76,18 @@ impl Player {
     pub fn new(difficulty: i16) -> Self {
         let max = max_life(difficulty);
         Self { life: max, max_life: max, rations: 0, very_easy: difficulty <= 10, ..default() }
+    }
+
+    /// Body height for collision and bullets (mm): standing, crouching,
+    /// prone (hip heights 0.8 / 0.42 / 0.14 m from the motions).
+    pub fn height(&self) -> f32 {
+        if self.prone {
+            400.0
+        } else if self.crouch {
+            1000.0
+        } else {
+            HEIGHT
+        }
     }
 
     pub fn dead(&self) -> bool {
@@ -176,7 +193,13 @@ pub fn control(
         input = Vec2::Y;
     }
     if keys.just_pressed(KeyCode::KeyC) {
-        p.crouch = !p.crouch;
+        // From prone, C gets back up to a crouch.
+        p.crouch = !p.crouch || p.prone;
+        p.prone = false;
+    }
+    if keys.just_pressed(KeyCode::KeyZ) {
+        p.prone = !p.prone;
+        p.crouch = p.prone;
     }
     let walking = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
@@ -195,6 +218,7 @@ pub fn control(
     let moving = dir != Vec2::ZERO;
     let speed = match (moving, p.crouch, walking) {
         (false, _, _) => 0.0,
+        (true, _, _) if p.prone => CRAWL_SPEED,
         (true, true, _) => CROUCH_SPEED,
         (true, false, true) => WALK_SPEED,
         (true, false, false) => RUN_SPEED,
@@ -208,7 +232,7 @@ pub fn control(
     let old = body.pos;
     let mut next = body.pos + Vec3::new(dir.x, 0.0, dir.y) * speed * dt;
     if let Some(col) = &game.collision {
-        next = col.push_out(next, RADIUS, HEIGHT, STEP_UP);
+        next = col.push_out(next, RADIUS, p.height(), STEP_UP.min(p.height() - 1.0));
         match col.floor_below(next.x, next.z, next.y + STEP_UP) {
             Some(floor) => {
                 if next.y - floor > 30.0 {
@@ -236,6 +260,8 @@ pub fn control(
     }
 
     body.play(match (p.crouch, speed) {
+        _ if p.prone && speed > 0.0 => motion::CRAWL,
+        _ if p.prone => motion::PRONE_IDLE,
         (true, s) if s > 0.0 => motion::CROUCH_WALK,
         (true, _) => motion::CROUCH_IDLE,
         (false, s) if s >= RUN_SPEED => motion::RUN,

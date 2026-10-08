@@ -927,7 +927,7 @@ fn hud(
     let message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
     **t = format!(
         "{}  {}  guards {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
-         WASD move  Shift walk  C crouch  Space action  F aim/fire M9  V punch  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
+         WASD move  Shift walk  C crouch  Z prone  Space action  F aim/fire M9  V punch  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
         game.data.name,
         status,
         guards.iter().count(),

@@ -65,11 +65,11 @@ pub fn fire(commands: &mut Commands, rng: &mut Rng, from: Vec3, at: Vec3) {
 
 /// Where the segment `a`..`b` passes through a standing body's cylinder
 /// (feet at `base`), as the hit height above the feet.
-fn hits_body(a: Vec3, b: Vec3, base: Vec3) -> Option<f32> {
+fn hits_body(a: Vec3, b: Vec3, base: Vec3, height: f32) -> Option<f32> {
     (0..=8).find_map(|i| {
         let p = a.lerp(b, i as f32 / 8.0);
         let flat = Vec2::new(p.x - base.x, p.z - base.z).length();
-        (flat < RADIUS && p.y > base.y && p.y < base.y + HEIGHT).then_some(p.y - base.y)
+        (flat < RADIUS && p.y > base.y && p.y < base.y + height).then_some(p.y - base.y)
     })
 }
 
@@ -92,13 +92,13 @@ pub fn fly(
         let end = wall.map_or(next, |t| b.pos.lerp(next, t));
         if b.dart {
             for (gb, mut g) in &mut guards {
-                if let Some(h) = hits_body(b.pos, end, gb.pos) {
+                if let Some(h) = hits_body(b.pos, end, gb.pos, HEIGHT) {
                     g.tranquilize(h > HEAD_HEIGHT);
                     commands.entity(e).despawn();
                     continue 'bullets;
                 }
             }
-        } else if hits_body(b.pos, end, sb.pos).is_some() && !player.dead() {
+        } else if hits_body(b.pos, end, sb.pos, player.height()).is_some() && !player.dead() {
             player.damage(DAMAGE);
             commands.entity(e).despawn();
             continue;

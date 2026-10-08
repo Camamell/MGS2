@@ -55,6 +55,7 @@ too.
 | W A S D | run (camera-relative) |
 | Shift | walk |
 | C | crouch |
+| Z | prone / crawl (lower to the guards' eyes and bullets; fits under low gaps) |
 | Space | action: open doors (stage exits load the next stage); some traps react to it too |
 | F (hold, release) | aim and fire the M9 tranquilizer |
 | V | punch (three in a row knock a guard out) |

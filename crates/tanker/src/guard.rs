@@ -286,7 +286,8 @@ fn to_units(rad: f32) -> i32 {
 }
 
 /// `FUN_002559C0` for the target Snake. Returns the perception level.
-fn perceive(g: &Guard, body: &Body, snake: Vec3, game: &Game) -> u8 {
+/// `height`: how tall the target stands (mm); the sight line goes to 60%.
+fn perceive(g: &Guard, body: &Body, snake: Vec3, height: f32, game: &Game) -> u8 {
     let to = snake - body.pos;
     let dist = to.length();
     let (near, far) = (g.vision.distance, g.vision.distance * 1.5);
@@ -294,7 +295,7 @@ fn perceive(g: &Guard, body: &Body, snake: Vec3, game: &Game) -> u8 {
         return 0;
     }
     let eye = body.pos + Vec3::Y * EYE;
-    let target = snake + Vec3::Y * (HEIGHT * 0.6);
+    let target = snake + Vec3::Y * (height * 0.6);
     let blocked = || game.collision.as_ref().is_some_and(|c| c.line_blocked(eye, target));
     // FUN_00256C08(self, target, 250, 1500, 250): bumping into the guard.
     if to.x.abs() <= 250.0 && to.z.abs() <= 250.0 && to.y.abs() <= 1500.0 {
@@ -401,6 +402,7 @@ pub fn think(
     let Ok((snake_body, player)) = snake.single() else { return };
     let snake_pos = snake_body.pos;
     let snake_dead = player.dead();
+    let snake_height = player.height();
     let snake_running = player.speed >= crate::player::RUN_SPEED;
     let changed = std::mem::take(&mut phase.changed);
     let mut highest = 0i32;
@@ -433,7 +435,7 @@ pub fn think(
             continue;
         }
         // Sensing (FUN_00222978): perception, then the meter.
-        g.level = perceive(&g, &body, snake_pos, &game);
+        g.level = perceive(&g, &body, snake_pos, snake_height, &game);
         if g.level == 3 {
             g.last_seen = Some(snake_pos);
             phase.last_seen = Some(snake_pos);
@@ -446,7 +448,7 @@ pub fn think(
             && g.level < 3
             && matches!(g.state, State::Patrol | State::Wait(_) | State::Return | State::Investigate { .. })
         {
-            let seen = sleepers.iter().find(|(e, p)| *e != me && perceive(&g, &body, *p, &game) == 3);
+            let seen = sleepers.iter().find(|(e, p)| *e != me && perceive(&g, &body, *p, 400.0, &game) == 3);
             if let Some(&(sleeper, at)) = seen {
                 plan(&mut g, body.pos, at, &game);
                 g.state = State::Rouse { sleeper, at };
@@ -506,7 +508,7 @@ pub fn think(
             PhaseKind::Alert => {
                 if alert_brain(&mut g, &mut body, snake_pos, snake_dead, dt, &game, &mut rng) {
                     let muzzle = body.pos + Vec3::Y * MUZZLE + body.forward() * 400.0;
-                    let at = snake_pos + Vec3::Y * (HEIGHT * 0.6);
+                    let at = snake_pos + Vec3::Y * (snake_height * 0.6);
                     bullet::fire(&mut commands, &mut rng, muzzle, at);
                 }
             }
