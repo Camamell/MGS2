@@ -10,6 +10,7 @@ mod bullet;
 mod collision;
 mod gcl;
 mod guard;
+mod items;
 mod nav;
 mod player;
 
@@ -149,6 +150,8 @@ struct Cast {
     snake: Option<(usize, Option<usize>, Vec3, f32)>,
     guards: Vec<(Guard, usize, Option<usize>, Vec3)>,
     props: Vec<Prop>,
+    /// Item boxes and their model.
+    items: Vec<(items::Item, usize)>,
 }
 
 /// A static model placed by the script: `chara 0x7a8ec1` (scenery such as
@@ -252,6 +255,7 @@ fn prepare(
     let mut doors = Vec::new();
     let mut traps = Vec::new();
     let mut props = Vec::new();
+    let mut items = Vec::new();
     let mut banks_after = banks.clone();
     // Snake's start: the player actor's `-p x y z -d dir`, which read the
     // start variables; else the start variables themselves.
@@ -289,12 +293,22 @@ fn prepare(
         phase = Phase::from_manager(vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR));
         traps = vm.traps.iter().map(|t| (t.clone(), false)).collect();
         props = vm.spawns.iter().filter(|s| PROP_ACTORS.contains(&s.kind)).filter_map(|s| prop(s, &data)).collect();
+        items = vm
+            .spawns
+            .iter()
+            .filter(|s| s.kind == items::ITEM_ACTOR)
+            .filter_map(items::Item::from_spawn)
+            .filter_map(|(item, model)| Some((item, data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == model)?)))
+            .collect();
         eprintln!(
-            "{name}: script created {} actors, {} guards, {} doors, {} traps",
+            "{name}: script created {} actors, {} guards, {} doors, {} traps, {} props, {} of {} items",
             vm.spawns.len(),
             guards.len(),
             doors.len(),
-            traps.len()
+            traps.len(),
+            props.len(),
+            items.len(),
+            vm.spawns.iter().filter(|s| s.kind == items::ITEM_ACTOR).count(),
         );
         if print_spawns {
             for s in &vm.spawns {
@@ -329,7 +343,7 @@ fn prepare(
     } else {
         game.entrance_done();
     }
-    Ok(Level { game, phase, cast: Cast { snake, guards, props } })
+    Ok(Level { game, phase, cast: Cast { snake, guards, props, items } })
 }
 
 fn main() -> Result<()> {
@@ -384,6 +398,7 @@ fn main() -> Result<()> {
     .insert_resource(level.phase)
     .insert_resource(NewCast(Mutex::new(Some(level.cast))))
     .insert_resource(bullet::Rng(0x2001_1113))
+    .init_resource::<items::Inventory>()
     .insert_resource(Session {
         disc: Mutex::new(disc),
         difficulty: cli.difficulty,
@@ -404,8 +419,10 @@ fn main() -> Result<()> {
         (
             spawn_level.run_if(resource_exists::<NewCast>),
             player::control,
+            items::pickup,
             guard::think,
             bullet::fly,
+            items::sync_rations,
             game_over,
             body::skin,
             player::follow_camera,
@@ -466,6 +483,7 @@ fn spawn_level(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cams: Query<&mut FollowCam>,
     mut first: Local<bool>,
+    inventory: Res<items::Inventory>,
 ) {
     let cast = new.0.lock().unwrap().take();
     // After a stage change, look over Snake's shoulder the way he faces.
@@ -484,6 +502,15 @@ fn spawn_level(
         let model = &data.models[p.model].1;
         let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
         commands.entity(e).insert(p.transform);
+    }
+    for (item, model) in cast.items {
+        if inventory.taken.contains(&(data.name.clone(), item.name)) {
+            continue;
+        }
+        let model = &data.models[model].1;
+        let at = Transform::from_translation(item.pos * SCALE);
+        let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        commands.entity(e).insert((at, item));
     }
     let mut spawn = |commands: &mut Commands, model: usize, bundle: Body| {
         scene::spawn_model(
@@ -754,6 +781,7 @@ fn hud(
     phase: Res<Phase>,
     player: Query<(&Body, &Player)>,
     guards: Query<&Guard>,
+    inv: Res<items::Inventory>,
     mut text: Query<&mut Text, With<Hud>>,
 ) {
     let (Ok((b, p)), Ok(mut t)) = (player.single(), text.single_mut()) else { return };
@@ -773,14 +801,22 @@ fn hud(
         format!("LIFE {} {}/{}{}", bar(p.life, p.max_life), p.life, p.max_life, if p.hurt > 0.0 { "  HIT!" } else { "" })
     };
     let prompt = if door_in_reach(&game, b.pos).is_some() { "  [Space] open door" } else { "" };
+    let mut carried: Vec<String> =
+        inv.counts.iter().filter(|(_, n)| **n > 0).map(|((k, i), n)| format!("{} {n}", items::name(*k, *i))).collect();
+    if inv.ration_equipped {
+        carried.insert(0, "[Ration equipped]".into());
+    }
+    let message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
     **t = format!(
-        "{}  {}  guards {}\n{}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
-         WASD move  Shift walk  C crouch  Space action  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
+        "{}  {}  guards {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
+         WASD move  Shift walk  C crouch  Space action  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
         game.data.name,
         status,
         guards.iter().count(),
         life,
         prompt,
+        if carried.is_empty() { "-".to_string() } else { carried.join(", ") },
+        message,
         b.pos.x,
         b.pos.y,
         b.pos.z,
