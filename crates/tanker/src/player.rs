@@ -43,6 +43,8 @@ pub struct Player {
     /// Seconds of hit flash left.
     pub hurt: f32,
     pub very_easy: bool,
+    /// Holding the M9 up.
+    pub aiming: bool,
 }
 
 /// Maximum life by difficulty, from `n_title`'s difficulty select
@@ -97,10 +99,21 @@ pub struct AutoWalk {
     pub seconds: f32,
 }
 
+/// `--fire-at`: aim for half a second from this time, then fire.
+#[derive(Resource)]
+pub struct AutoFire(pub f32);
+
+/// Muzzle height when aiming (mm above the feet, approximate).
+const MUZZLE: f32 = 1350.0;
+
+#[allow(clippy::too_many_arguments)]
 pub fn control(
+    mut commands: Commands,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     auto: Option<Res<AutoWalk>>,
+    auto_fire: Option<Res<AutoFire>>,
+    mut inv: ResMut<crate::items::Inventory>,
     mut game: ResMut<Game>,
     cam: Query<&FollowCam>,
     mut q: Query<(&mut Player, &mut Body)>,
@@ -113,6 +126,26 @@ pub fn control(
         p.speed = 0.0;
         body.play(motion::IDLE);
         return;
+    }
+
+    // M9: hold F to aim along the camera's view, release to fire a dart.
+    let t = time.elapsed_secs();
+    let aim = (keys.pressed(KeyCode::KeyF) || auto_fire.as_ref().is_some_and(|a| (a.0..a.0 + 0.5).contains(&t)))
+        && game.entrance <= 0.0;
+    if aim {
+        p.aiming = true;
+        p.speed = 0.0;
+        body.yaw = turn_toward(body.yaw, cam.yaw + std::f32::consts::PI, TURN_RATE * 2.0 * dt);
+        body.play(motion::IDLE);
+        return;
+    }
+    if std::mem::take(&mut p.aiming) {
+        let ammo = inv.counts.entry(crate::items::M9_AMMO).or_default();
+        if *ammo > 0 {
+            *ammo -= 1;
+            let f = body.forward();
+            crate::bullet::fire_dart(&mut commands, body.pos + Vec3::Y * MUZZLE + f * 400.0, f);
+        }
     }
 
     let mut input = Vec2::ZERO;

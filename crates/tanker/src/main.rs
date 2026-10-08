@@ -66,6 +66,9 @@ struct Cli {
     /// Start the auto-walk this many seconds in.
     #[arg(long, default_value_t = 0.0)]
     walk_from: f32,
+    /// Aim the M9 at this time (seconds) and fire half a second later.
+    #[arg(long)]
+    fire_at: Option<f32>,
     /// Put Snake here instead (mm, `--snake-at=x,y,z`; for testing).
     #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
     snake_at: Option<Vec<f32>>,
@@ -442,6 +445,9 @@ fn main() -> Result<()> {
     if let Some(s) = cli.auto_walk {
         app.insert_resource(AutoWalk { from: cli.walk_from, seconds: s });
     }
+    if let Some(t) = cli.fire_at {
+        app.insert_resource(player::AutoFire(t));
+    }
     if let Some(path) = cli.screenshot {
         app.insert_resource(Capture { path, at: cli.shot_at, taken: false }).add_systems(Last, capture);
     }
@@ -809,7 +815,7 @@ fn hud(
     let message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
     **t = format!(
         "{}  {}  guards {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
-         WASD move  Shift walk  C crouch  Space action  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
+         WASD move  Shift walk  C crouch  Space action  F aim/fire M9  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
         game.data.name,
         status,
         guards.iter().count(),

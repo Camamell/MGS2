@@ -1,4 +1,4 @@
-﻿# mgs2-tanker
+# mgs2-tanker
 
 A reverse-engineering project to rebuild the Tanker chapter of
 *Metal Gear Solid 2: Sons of Liberty* (PS2, NTSC-U, SLUS-201.44) in Rust on

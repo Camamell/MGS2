@@ -8,7 +8,11 @@ use mgs2_bevy::scene::SCALE;
 
 use crate::Game;
 use crate::body::Body;
+use crate::guard::Guard;
 use crate::player::{HEIGHT, Player, RADIUS};
+
+/// Hits above this height (mm over the feet) count as head shots.
+const HEAD_HEIGHT: f32 = 1500.0;
 
 pub const SPEED: f32 = 1000.0 * 60.0;
 pub const RANGE: f32 = 20000.0;
@@ -21,6 +25,13 @@ pub struct Bullet {
     pub pos: Vec3,
     pub dir: Vec3,
     pub travelled: f32,
+    /// Snake's tranquilizer dart (hits guards) rather than a guard's round.
+    pub dart: bool,
+}
+
+/// Snake's M9 dart: straight along `dir`.
+pub fn fire_dart(commands: &mut Commands, from: Vec3, dir: Vec3) {
+    commands.spawn(Bullet { pos: from, dir: dir.normalize_or(Vec3::Z), travelled: 0.0, dart: true });
 }
 
 /// Small deterministic RNG (the game uses `FUN_0016F600`).
@@ -49,7 +60,17 @@ pub fn fire(commands: &mut Commands, rng: &mut Rng, from: Vec3, at: Vec3) {
     let yaw = d.x.atan2(d.z) + rng.signed() * SPREAD;
     let pitch = d.y.asin() + rng.signed() * SPREAD;
     let dir = Vec3::new(yaw.sin() * pitch.cos(), pitch.sin(), yaw.cos() * pitch.cos());
-    commands.spawn(Bullet { pos: from, dir, travelled: 0.0 });
+    commands.spawn(Bullet { pos: from, dir, travelled: 0.0, dart: false });
+}
+
+/// Where the segment `a`..`b` passes through a standing body's cylinder
+/// (feet at `base`), as the hit height above the feet.
+fn hits_body(a: Vec3, b: Vec3, base: Vec3) -> Option<f32> {
+    (0..=8).find_map(|i| {
+        let p = a.lerp(b, i as f32 / 8.0);
+        let flat = Vec2::new(p.x - base.x, p.z - base.z).length();
+        (flat < RADIUS && p.y > base.y && p.y < base.y + HEIGHT).then_some(p.y - base.y)
+    })
 }
 
 /// Moves bullets, stops them at walls and applies hits to Snake.
@@ -58,26 +79,31 @@ pub fn fly(
     time: Res<Time>,
     game: Res<Game>,
     mut bullets: Query<(Entity, &mut Bullet)>,
-    mut snake: Query<(&Body, &mut Player)>,
+    mut snake: Query<(&Body, &mut Player), Without<Guard>>,
+    mut guards: Query<(&Body, &mut Guard), Without<Player>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let Ok((sb, mut player)) = snake.single_mut() else { return };
-    for (e, mut b) in &mut bullets {
+    'bullets: for (e, mut b) in &mut bullets {
         let step = SPEED * dt;
         let next = b.pos + b.dir * step;
-        // Snake: distance from his body axis to this frame's segment.
-        let base = sb.pos;
-        let hit = (0..=8).any(|i| {
-            let p = b.pos.lerp(next, i as f32 / 8.0);
-            let flat = Vec2::new(p.x - base.x, p.z - base.z).length();
-            flat < RADIUS && p.y > base.y && p.y < base.y + HEIGHT
-        });
-        let wall = game.collision.as_ref().is_some_and(|c| c.line_blocked(b.pos, next));
-        if hit && !player.dead() {
+        // Stop at the first wall or floor on this frame's segment.
+        let wall = game.collision.as_ref().and_then(|c| c.ray(b.pos, next));
+        let end = wall.map_or(next, |t| b.pos.lerp(next, t));
+        if b.dart {
+            for (gb, mut g) in &mut guards {
+                if let Some(h) = hits_body(b.pos, end, gb.pos) {
+                    g.tranquilize(h > HEAD_HEIGHT);
+                    commands.entity(e).despawn();
+                    continue 'bullets;
+                }
+            }
+        } else if hits_body(b.pos, end, sb.pos).is_some() && !player.dead() {
             player.damage(DAMAGE);
             commands.entity(e).despawn();
             continue;
         }
+        let wall = wall.is_some();
         b.pos = next;
         b.travelled += step;
         if wall || b.travelled > RANGE {
@@ -89,6 +115,7 @@ pub fn fly(
 pub fn draw(bullets: Query<&Bullet>, mut gizmos: Gizmos) {
     for b in &bullets {
         let p = b.pos * SCALE;
-        gizmos.line(p, p - b.dir * 0.6, Color::srgb(1.0, 0.9, 0.5));
+        let colour = if b.dart { Color::srgb(0.5, 0.9, 1.0) } else { Color::srgb(1.0, 0.9, 0.5) };
+        gizmos.line(p, p - b.dir * 0.6, colour);
     }
 }

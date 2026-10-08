@@ -13,6 +13,10 @@ use crate::gcl::Spawn;
 use crate::player::Player;
 
 pub const ITEM_ACTOR: u32 = 0x9AFF54;
+/// Inventory key of the M9's darts (weapon ammunition, weapon 1).
+pub const M9_AMMO: (i32, i32) = (1, 1);
+/// Darts Snake starts with (an assumption, not read from the game).
+pub const M9_START: i32 = 15;
 /// Pickup reach (mm, horizontal) and height tolerance.
 const REACH: f32 = 700.0;
 
@@ -50,7 +54,7 @@ pub fn name(kind: i32, id: i32) -> String {
         (0, 13) => "Thermal Goggles",
         (0, 16) | (0, 24) => "Box",
         (0, 33) => "Dog Tags",
-        (1, 1) => "M9 ammo",
+        (1, 1) => "M9 darts",
         (1, 2) => "USP ammo",
         (2, 10) => "Chaff G.",
         (2, 11) => "Stun G.",
@@ -61,7 +65,7 @@ pub fn name(kind: i32, id: i32) -> String {
 }
 
 /// What Snake carries, kept across stages.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct Inventory {
     pub counts: BTreeMap<(i32, i32), i32>,
     /// Item actors already taken, per stage.
@@ -69,6 +73,17 @@ pub struct Inventory {
     /// Last pickup message and seconds to show it.
     pub message: Option<(String, f32)>,
     pub ration_equipped: bool,
+}
+
+impl Default for Inventory {
+    fn default() -> Self {
+        Self {
+            counts: BTreeMap::from([(M9_AMMO, M9_START)]),
+            taken: HashSet::new(),
+            message: None,
+            ration_equipped: false,
+        }
+    }
 }
 
 pub fn pickup(

@@ -138,7 +138,22 @@ pub enum State {
     Search { wait: u32 },
     /// Going back to the route after alert/evasion/investigation.
     Return,
+    /// Hit by a tranquilizer dart: `delay` frames of staying on his feet
+    /// (body hits), then falls (motion 113) and sleeps (motion 114) until
+    /// `timer` reaches [`SLEEP_FRAMES`].
+    Asleep { delay: f32, timer: f32 },
 }
+
+mod sleep {
+    /// gbs.mar: falling prone, lying asleep.
+    pub const FALL: usize = 113;
+    pub const LIE: usize = 114;
+    pub const FALL_FRAMES: f32 = 140.0;
+}
+/// How long a tranquilized guard sleeps (frames; not from the game yet).
+const SLEEP_FRAMES: f32 = 60.0 * 60.0;
+/// Body hits take a moment to work (frames; not from the game yet).
+const DART_DELAY: f32 = 150.0;
 
 #[derive(Component)]
 pub struct Guard {
@@ -209,6 +224,18 @@ pub fn from_spawn(s: &Spawn, default_vision: f32) -> Option<(Guard, Vec3)> {
 }
 
 impl Guard {
+    pub fn asleep(&self) -> bool {
+        matches!(self.state, State::Asleep { .. })
+    }
+
+    /// A dart hit: head shots work at once.
+    pub fn tranquilize(&mut self, head: bool) {
+        if !self.asleep() {
+            self.state = State::Asleep { delay: if head { 0.0 } else { DART_DELAY }, timer: 0.0 };
+            self.path.clear();
+        }
+    }
+
     /// Back to the patrol with no memory of Snake (continuing after a game
     /// over).
     pub fn reset(&mut self) {
@@ -345,6 +372,28 @@ pub fn think(
     let mut highest = 0i32;
 
     for (mut g, mut body) in &mut guards {
+        if let State::Asleep { delay, timer } = g.state {
+            let frames = dt * 60.0;
+            g.level = 0;
+            g.meter = 0;
+            g.tracking = None;
+            if delay > 0.0 {
+                // Groggy: stands and sways until the dart takes effect.
+                body.play(motion::IDLE);
+                body.yaw += (delay / 20.0).sin() * dt;
+                g.state = State::Asleep { delay: delay - frames, timer };
+            } else if timer < SLEEP_FRAMES {
+                body.play(if timer < sleep::FALL_FRAMES { sleep::FALL } else { sleep::LIE });
+                g.state = State::Asleep { delay: 0.0, timer: timer + frames };
+            } else {
+                g.last_seen = None;
+                if let Some(wp) = waypoint(&game, g.route, g.node) {
+                    plan(&mut g, body.pos, Vec3::from(wp.position), &game);
+                }
+                g.state = State::Return;
+            }
+            continue;
+        }
         // Sensing (FUN_00222978): perception, then the meter.
         g.level = perceive(&g, &body, snake_pos, &game);
         if g.level == 3 {
@@ -516,6 +565,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
             }
         }
         State::Chase | State::Search { .. } => g.state = State::Return,
+        State::Asleep { .. } => {}
     }
 }
 

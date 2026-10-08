@@ -78,7 +78,7 @@ impl StageData {
             .enumerate()
             .filter_map(|(i, (_, m))| {
                 let joints = m.motions.iter().map(|x| x.joints.len()).max()?;
-                (joints > 1 && joints <= objects).then_some((objects - joints, std::cmp::Reverse(m.motions.len()), i))
+                (joints > 1 && joints <= objects).then(|| (objects - joints, std::cmp::Reverse(m.motions.len()), i))
             })
             .collect();
         v.sort();
