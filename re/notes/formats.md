@@ -52,8 +52,15 @@ the letter marks a handler that also runs on unload):
   normal * 32000 packed into the vertices' `w`.
 - Verified by overlaying on the `w00a` level mesh: the walls trace the hull
   and superstructure.
-- Open: the second wall/floor set (ids +0x400), element flags, header tables
-  A/B, the fifth per-group list, and the area's other pointers (navigation?).
+- The fifth per-group list holds trap boxes: 20-byte records `i16 min x y z,
+  pad, i16 max x y z, pad, u32 name` relative to the group centre (the pads
+  differ between copies of a box in different cells). Scripts name them in
+  `trap <box> <actor> -m <mode> -e {...}`; e.g. w00a `r_boat` covers the
+  lifeboats on the 2F deck.
+- The area's +04/+0C pointers are navigation nodes (see Guards, and
+  `hzx.rs`).
+- Open: the second wall/floor set (ids +0x400), element flags, header table
+  B, and the precomputed shortest-path matrices.
 
 ## gcx (GCL scripts): done (disassembly)
 
@@ -85,6 +92,40 @@ pieces with different collision areas (e.g. `w04a1` in w04a). Cutscene stages
 Open: the viewer orientation may be mirrored (handedness unverified). Check
 it against an asymmetric reference such as Snake's holster side once his
 model is located (it is not in the w00a files).
+
+## Script actors used by the game
+
+| Actor | Meaning | Options |
+|---|---|---|
+| `0x35a2cf` | map piece | `-k model [x y z]... -h hzx area -l lt2` |
+| `0x7a8ec1` | static scenery (floors, furniture, passages) | `-m model -r rx ry rz -p x y z -s sx sy sz (%) -f flags`; `-f` bit 0x100 = never drawn (helper poles) |
+| `0xd1279a` | plant (breakable) | `-m model -b broken -r -p -s` |
+| `0xcba568` | breakable glass | `-m model broken pieces -p` |
+| `0x9aff54` | item box | `<name> -p x y z -k model -s shadow -l label -f kind (0 item, 1 ammo, 2 grenade) -i id -n count -x {on pickup}` |
+| `0xebec24` | deck door (hatch) | `-k door handle -p -r -O proc (opened; $1 = 0) -h x y z x y z (handle line)` |
+| `0x55b942` | sliding door | `-m model -d rx ry rz -p -s width -t -b` |
+| `0x128946` | player | `-m sna_def -a snake -p x y z -d 0 dir`, name `0x28dce6` |
+| `0xf7f777` | soldier | see Guards |
+| `0x43f718` | camera (set from traps) | `-c type -p pos -t target ...` (not used yet) |
+| `delay` | timer | `-t frames -e {block}` |
+| `0xe22388` | fade | `-t frames -p proc` (proc runs when done) |
+
+Stage exits: a door's `-O` proc (or a trap block) calls a proc that sets
+Snake's next position (`Au32:0xbc/0x7f4/0xc0`, facing `0x7f8`), the story
+marker `Au32:0xc4`, and then `load "<stage>"`, usually behind a `delay` or a
+fade. The game runs these with the timers and fades firing immediately.
+`Abit:0x7e8.5` is set once Snake's entrance walk-in is over; exit traps
+check it so Snake does not leave through the door he came in by.
+
+## trap events (`FUN_0014A448`)
+
+Each frame the trap boxes containing an actor are compared with the
+previous frame's: new boxes send `0x670d6b` (enter), kept ones `0x54a56b`
+(stay), lost ones `0x61d56b` (leave). A handler's `-m` mode filters them:
+an event code itself, `0x14c9` (enter and leave) or `0x1516` (all three).
+The block gets `$1` box, `$2` actor, `$3` event, `$4..$6` actor position.
+Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
+(facing) and `-s` (stance; not modelled yet).
 
 ## mar (motions): joint rotations and root height done
 
@@ -140,12 +181,13 @@ image (w00a addresses `0x3AF000..0x3B5000`).
   flags (4 = look-at point), wait (frames, -1 = forever), direction, ?,
   action, ...`.
 - Header table at +10 (0x30-byte records) holds boxes, probably event areas.
-- `gbs.mar`: 0 idle, 1 walk (1.33 m/s), 2 run (4.05 m/s).
-- Still a stand-in: the guards' decision logic, the meaning of the vision
-  parameters beyond `i[0]` and the 0x200 angle, hearing, and navigation
-  (guards move in straight lines, so they get stuck on walls when chasing).
+- `gbs.mar`: 0 idle, 1 walk (1.33 m/s), 2 run (4.05 m/s), 113 fall prone,
+  114 lying (asleep / knocked out).
+- `snake.mar`: 13 collapse onto his side (death), 14 fall face down, 176
+  knocked onto his back.
+- The guard AI port is described in `guard-ai.md`.
 
 ## Not started
 
-`mar` (motion archives; needed to animate characters), `lt2`, `cv2`, `evm`,
-`far`, `o2d`, `sar`, `var`, `zms`, `r*`, and the `anm` sound-bank pages.
+`lt2`, `cv2`, `evm`, `far`, `o2d`, `sar`, `var`, `zms`, `r*`, and the `anm`
+sound-bank pages.

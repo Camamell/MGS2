@@ -55,23 +55,40 @@ too.
 | W A S D | run (camera-relative) |
 | Shift | walk |
 | C | crouch |
-| Space | action: open doors (stage exits load the next stage) |
+| Space | action: open doors (stage exits load the next stage); some traps react to it too |
+| F (hold, release) | aim and fire the M9 tranquilizer |
+| V | punch (three in a row knock a guard out) |
+| R | equip / unequip a ration (revives Snake at zero life) |
 | Enter | continue after a game over |
 | Q / E, right mouse drag | turn the camera |
 | F1 | collision, plus patrol routes |
 | F2 | guard vision cones |
 
-Testing hooks: `--auto-walk <seconds>` holds forward, `--cam-yaw/--cam-dist/
---cam-pitch`, `--follow-guard N`, `--trace` (guard states every second),
-`--spawns` (every actor the script creates), `--snake-at=x,y,z` (mm),
-`--use-door N --door-at <seconds>` (open a door without walking there),
-`--screenshot out.png --shot-at <seconds>`.
+Testing hooks: `--auto-walk <seconds>` holds forward (`--walk-from`),
+`--cam-yaw/--cam-dist/--cam-pitch`, `--follow-guard N`, `--trace` (guard
+states every second, trap events), `--spawns` (every actor the script
+creates), `--snake-at=x,y,z` and `--snake-dir` (4096 = full turn),
+`--use-door N --door-at <seconds>`, `--fire-at <seconds>`, `--punch-at
+t1,t2,..`, `--screenshot out.png --shot-at <seconds>`.
 
-Guards see, investigate, raise the alert, chase along the navigation graph
-and shoot (aim, bursts, reloads as in the game's code); Snake's life follows
-the difficulty (200/150/100/75/50). Doors run the stage script's own exit
-procs, so walking through a deck door loads the next stage with Snake where
-the script puts him. Difficulty settings come from the title screen's script.
+What works:
+
+- Level geometry plus the script's scenery, plants and glass; item boxes
+  you can pick up (inventory kept across stages).
+- Guards see, hear running, investigate, raise the alert, chase along the
+  navigation graph and shoot (aim, bursts, reloads as in the game's code).
+  Darted or punched guards fall asleep and later return to their route;
+  guards who find them wake them and raise caution.
+- Snake's life follows the difficulty (200/150/100/75/50); he collapses with
+  his own death motion at zero.
+- Doors and traps run the stage script's own handlers, so walking through a
+  door or into an exit area loads the next stage with Snake where the
+  script puts him (after his walk-in). Difficulty settings come from the
+  title screen's script.
+- The camera follows Snake and keeps walls, decks and ceilings out of the way.
+
+Assumptions (not taken from the game yet): the M9 starts with 15 darts,
+sleep and knock-out times, reload pause and fire range.
 
 ## Viewer
 
