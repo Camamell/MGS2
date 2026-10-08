@@ -104,3 +104,14 @@ caution).
 - The game here uses a stand-in: cover, step out, aim, burst, duck back;
   darts take 15 (head 30) of 100 stamina. orga.mar: 4 run, 20 aim, 24
   crouch, 46 lying.
+- Steps decoded so far: most call `FUN_00327BC0(motion ctl, layer, motion, ...)`
+  to play an orga.mar motion, set flags at +0xF70 and advance. `FUN_002617E8`
+  14 then `FUN_00261878` 15 when she has ammo (+0xFB6 > 0; aims via`
+  `FUN_00268660`), `FUN_00261640` fires (`FUN_0025FD28`) unless flag 0x80000;
+  `FUN_00261308` 13 and a dash toward the target at +0x1030; `FUN_00262158`
+  / `21F0` / `2288` 37 / 38 / 39; `FUN_00265BA0` 1 (walk); `FUN_00260A10` 4
+  or 6; `FUN_002661E0` 46 (down; the defeat sequence at 0x1F6338);
+  `FUN_00262B00` layer-1 motion 12. `FUN_00268830(n)` returns entry n of a
+  16-byte table (positions?) and `FUN_0025FCC0` moves toward one.
+  `FUN_00267DE0` picks the next sequence through a condition function from
+  0x1F8198 (indexed by +0xF70 & 3), avoiding the last 8 picks (+0xF88).
