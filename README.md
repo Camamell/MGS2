@@ -120,7 +120,8 @@ What works:
   terminal; Otacon's review is the original Codec record, and the stage
   script's own callbacks restart the stage on the success path and lead to
   the chapter's last cutscene (d12t) and an end screen. The Marines stand
-  in formation where the script places them (`re/notes/formats.md`).
+  in formation where the script places them (`re/notes/formats.md`), and
+  the Marines on watch in the holds use the guard AI with their own motions.
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range. In the holds, the

@@ -155,8 +155,28 @@ pub enum State {
     HeldUp { loose: f32, shake: f32 },
 }
 
-/// gbs.mar: hands raised.
-const HANDS_UP: usize = 8;
+/// The motions a guard plays (indices into his motion archive).
+#[derive(Clone, Copy, Debug)]
+pub struct Anim {
+    pub idle: usize,
+    pub walk: usize,
+    pub run: usize,
+    /// Rifle raised.
+    pub aim: usize,
+    pub hands_up: usize,
+    /// Falling asleep, then lying.
+    pub fall: usize,
+    pub lie: usize,
+}
+
+impl Anim {
+    /// Gurlukovich soldiers, `gbs.mar`.
+    pub const SOLDIER: Anim = Anim { idle: motion::IDLE, walk: motion::WALK, run: motion::RUN, aim: motion::AIM, hands_up: 8, fall: sleep::FALL, lie: sleep::LIE };
+    /// US Marines, `ushold.mar`: 39 and 40 cover 1332 and 4057 mm/s, the
+    /// soldiers' walk and run; 46 hands up, 151 falls forward, 152 lies.
+    /// No rifle-raised motion was found, so they aim from the idle pose.
+    pub const MARINE: Anim = Anim { idle: 0, walk: 39, run: 40, aim: 0, hands_up: 46, fall: 151, lie: 152 };
+}
 /// A held-up guard turns on Snake after this long without a gun on him.
 const HOLDUP_LOOSE: f32 = 120.0;
 /// Aiming at a held-up guard from the front this long gets his dog tags.
@@ -198,6 +218,7 @@ pub struct Guard {
     pub hearing: f32,
     /// Has given up his dog tags.
     pub tagged: bool,
+    pub anim: Anim,
 }
 
 /// Shooting (`FUN_00228710`/`FUN_00228F80`): aim for 21 frames, then a
@@ -247,8 +268,30 @@ pub fn from_spawn(s: &Spawn, default_vision: f32) -> Option<(Guard, Vec3)> {
         attack: Attack::default(),
         hearing: s.opt_int(b'l', 0).filter(|d| *d > 0).map_or(3000.0, |d| d as f32),
         tagged: false,
+        anim: Anim::SOLDIER,
     };
     Some((guard, pos))
+}
+
+/// A guard walking `route` from its start (the Marines who patrol the
+/// holds).
+pub fn patrol(route: usize, vision: f32, anim: Anim) -> Guard {
+    Guard {
+        route,
+        node: 0,
+        state: State::Patrol,
+        vision: Vision { distance: vision, half_angle: 0x200 },
+        level: 0,
+        meter: 0,
+        tracking: None,
+        last_seen: None,
+        path: Vec::new(),
+        repath: 0,
+        attack: Attack::default(),
+        hearing: 3000.0,
+        tagged: false,
+        anim,
+    }
 }
 
 impl Guard {
@@ -452,14 +495,14 @@ pub fn think(
             g.tracking = None;
             if delay > 0.0 {
                 // Groggy: stands and sways until the dart takes effect.
-                body.play(motion::IDLE);
+                body.play(g.anim.idle);
                 body.yaw += (delay / 20.0).sin() * dt;
                 g.state = State::Asleep { delay: delay - frames, timer, wake };
             } else if timer < wake {
                 if timer < sleep::FALL_FRAMES {
-                    body.play_once(sleep::FALL);
+                    body.play_once(g.anim.fall);
                 } else {
-                    body.play(sleep::LIE);
+                    body.play(g.anim.lie);
                 }
                 g.state = State::Asleep { delay: 0.0, timer: timer + frames, wake };
             } else {
@@ -483,7 +526,7 @@ pub fn think(
             let frames = dt * 60.0;
             g.level = 0;
             g.meter = 0;
-            body.play(HANDS_UP);
+            body.play(g.anim.hands_up);
             let guard_fwd = body.forward();
             let in_front = (-to_guard).normalize_or_zero().angle_to(Vec2::new(guard_fwd.x, guard_fwd.z)).abs() < 1.0;
             g.state = if covered {
@@ -540,7 +583,7 @@ pub fn think(
             if g.level == 3 {
                 g.state = State::Discovery { timer: 0 };
             } else {
-                body.play(motion::RUN);
+                body.play(g.anim.run);
                 if follow(&mut g, &mut body, RUN_SPEED, 700.0, dt, &game) {
                     face(&mut body, at, dt);
                     woken.push(sleeper);
@@ -640,10 +683,10 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
     match g.state.clone() {
         State::Patrol => {
             let Some(wp) = waypoint(game, g.route, g.node) else {
-                body.play(motion::IDLE);
+                body.play(g.anim.idle);
                 return;
             };
-            body.play(motion::WALK);
+            body.play(g.anim.walk);
             if g.path.is_empty() {
                 g.path = vec![Vec3::from(wp.position)];
             }
@@ -659,7 +702,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
             }
         }
         State::Wait(left) => {
-            body.play(motion::IDLE);
+            body.play(g.anim.idle);
             if let Some(wp) = waypoint(game, g.route, g.node) {
                 let f = match wp.look_at {
                     Some(l) => (l[0] - body.pos.x).atan2(l[2] - body.pos.z),
@@ -681,7 +724,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
             let timer = timer + 1;
             g.state = match sub {
                 0 => {
-                    body.play(motion::IDLE);
+                    body.play(g.anim.idle);
                     face(body, target, dt);
                     if timer > 30 {
                         plan(g, body.pos, target, game);
@@ -691,7 +734,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
                     }
                 }
                 1 => {
-                    body.play(motion::WALK);
+                    body.play(g.anim.walk);
                     if follow(g, body, WALK_SPEED, 600.0, dt, game) || timer > 600 {
                         State::Investigate { target, sub: 2, timer: 0 }
                     } else {
@@ -699,7 +742,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
                     }
                 }
                 _ => {
-                    body.play(motion::IDLE);
+                    body.play(g.anim.idle);
                     body.yaw += (timer as f32 / 60.0).sin() * dt;
                     if timer > 300 {
                         g.last_seen = None;
@@ -716,7 +759,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
         State::Discovery { timer } => {
             // "!": face Snake while the reaction plays, then the meter goes
             // to 0x400, which raises the alert through the manager.
-            body.play(motion::IDLE);
+            body.play(g.anim.idle);
             face(body, snake, dt);
             let timer = timer + 1;
             if timer >= EXCLAIM_FRAMES {
@@ -725,7 +768,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
             g.state = State::Discovery { timer };
         }
         State::Return => {
-            body.play(motion::WALK);
+            body.play(g.anim.walk);
             if follow(g, body, WALK_SPEED, 300.0, dt, game) {
                 g.path.clear();
                 g.state = State::Patrol;
@@ -765,13 +808,13 @@ fn alert_brain(
     let a = &mut g.attack;
     if a.reload > 0.0 {
         a.reload -= frames;
-        body.play(motion::IDLE);
+        body.play(g.anim.idle);
         face(body, target, dt);
         return false;
     }
     if g.level == 3 && body.pos.distance(snake) < FIRE_RANGE && !snake_dead {
         g.path.clear();
-        body.play(motion::AIM);
+        body.play(g.anim.aim);
         face(body, snake, dt);
         if !a.firing {
             a.aim += frames;
@@ -808,10 +851,10 @@ fn alert_brain(
     }
     let reach = if g.level == 3 { 2500.0 } else { 600.0 };
     if follow(g, body, RUN_SPEED, reach, dt, game) {
-        body.play(motion::IDLE);
+        body.play(g.anim.idle);
         face(body, target, dt);
     } else {
-        body.play(motion::RUN);
+        body.play(g.anim.run);
     }
     false
 }
@@ -824,7 +867,7 @@ fn evasion_brain(g: &mut Guard, body: &mut Body, phase: &Phase, dt: f32, game: &
         return;
     };
     if wait > 0 {
-        body.play(motion::IDLE);
+        body.play(g.anim.idle);
         body.yaw += (wait as f32 / 40.0).sin() * dt;
         g.state = State::Search { wait: wait - 1 };
         if wait == 1 {
@@ -839,7 +882,7 @@ fn evasion_brain(g: &mut Guard, body: &mut Body, phase: &Phase, dt: f32, game: &
         }
         return;
     }
-    body.play(motion::WALK);
+    body.play(g.anim.walk);
     if follow(g, body, WALK_SPEED, 400.0, dt, game) {
         g.state = State::Search { wait: 120 };
     }

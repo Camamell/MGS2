@@ -50,6 +50,20 @@ pub fn members(s: &Spawn) -> Vec<Member> {
         .collect()
 }
 
+/// Members placed at `0 0 n` walk route `n` of the stage (the holds' patrols:
+/// one on Very Easy and Easy, two on Normal, three on Hard and Extreme in
+/// w04a). Returns their routes. The commandant (variant 19, also placed at
+/// the origin in w04c) is left out: he is not a patrol.
+pub fn walkers(s: &Spawn) -> Vec<usize> {
+    let Some(list) = s.opt(b'a') else { return Vec::new() };
+    list.chunks_exact(RECORD)
+        .filter_map(|r| {
+            let v = |i: usize| r[i].int().unwrap_or(0);
+            (v(1) == 0 && v(2) == 0 && v(3) >= 0 && v(7).rem_euclid(22) != 19).then_some(v(3) as usize)
+        })
+        .collect()
+}
+
 /// Model for a variant: the base body for the marines, the commandant's
 /// own model, the trousers-only variant.
 pub fn model_name(variant: i32) -> &'static str {

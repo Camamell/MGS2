@@ -226,7 +226,8 @@ const DOOR_REACH: f32 = 900.0;
 /// Characters to spawn for a freshly loaded stage.
 struct Cast {
     snake: Option<(usize, Option<usize>, Vec3, f32)>,
-    guards: Vec<(Guard, usize, Option<usize>, Vec3)>,
+    /// Guards: (guard, model, motions, position, rifle model).
+    guards: Vec<(Guard, usize, Option<usize>, Vec3, Option<usize>)>,
     props: Vec<Prop>,
     /// Item boxes and their model.
     items: Vec<(items::Item, usize)>,
@@ -440,7 +441,7 @@ fn prepare(
                     && let Some(y) = col.floor_below(p.x, p.z, p.y + 1000.0) {
                         p.y = y;
                     }
-                guards.push((g, m, gmar, p));
+                guards.push((g, m, gmar, p, model_index(&data, "aks")));
             }
         }
         for s in vm.spawns.iter().filter(|s| s.kind == DOOR_ACTOR) {
@@ -480,6 +481,20 @@ fn prepare(
             })
             .collect();
         let ushold = motions_index(&data, "ushold");
+        // The Marines who patrol (crowd members on a route).
+        let vision = banks_vision(&vm.banks());
+        if let Some(m) = model_index(&data, "us_def_1") {
+            for route in vm.spawns.iter().filter(|s| s.kind == crowd::CROWD_ACTOR).flat_map(crowd::walkers) {
+                let start = data.collision.as_ref().and_then(|h| h.routes.get(route)).and_then(|r| r.points.first());
+                if let Some(wp) = start {
+                    let mut p = Vec3::from(wp.position);
+                    if let Some(y) = collision.as_ref().and_then(|c| c.floor_below(p.x, p.z, p.y + 1000.0)) {
+                        p.y = y;
+                    }
+                    guards.push((guard::patrol(route, vision, guard::Anim::MARINE), m, ushold, p, model_index(&data, "m4a_nm")));
+                }
+            }
+        }
         crowd = vm
             .spawns
             .iter()
@@ -834,10 +849,10 @@ fn spawn_level(
         }
         None => error!("Snake's model (sna_def) not found"),
     }
-    for (g, model, motions, pos) in cast.guards {
+    for (g, model, motions, pos, gun) in cast.guards {
         let e = spawn(&mut commands, model, Body::new(pos, 0.0, model, motions));
         commands.entity(e).insert(g);
-        weapons.extend(model_index(data, "aks").map(|m| (e, m, false, body::rifle_grip())));
+        weapons.extend(gun.map(|m| (e, m, false, body::rifle_grip())));
     }
     for (model, motions, pos, yaw, on_down) in cast.bosses {
         let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
@@ -1229,6 +1244,13 @@ fn speech(
         info!("speech {id:#x} over: running {p:#x}");
         script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[0]), &level, &bullets);
     }
+}
+
+/// Guards' near sight range by difficulty (As16:0x1bc, set by the title
+/// screen's script; 6000 if unset).
+fn banks_vision(banks: &gcl::Banks) -> f32 {
+    let v = i16::from_le_bytes([banks.a[0x1BC], banks.a[0x1BD]]);
+    if v > 0 { f32::from(v) } else { 6000.0 }
 }
 
 /// Seconds before troopers arrive after the alert (the squad's `-w`, 180

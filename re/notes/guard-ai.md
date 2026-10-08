@@ -103,6 +103,17 @@ caution).
   once caution begins. Their own brain (`cmd_cc9a07`) and the squad's
   formation are not ported.
 
+## US Marines in the holds
+
+The holds have no `0xf7f777` soldiers. Their Marines are members of the
+crowd actor `#b3e388` (see `formats.md`): most stand in formation, and
+members placed at `0 0 n` keep watch on route `n` (in w04a routes 4 and 6
+are single-point posts; Hard adds route 2). Their archive `ushold.mar` has
+the soldiers' speeds (walk 39: 2109 mm / 95 frames, run 40: 2164 mm / 32
+frames), hands up 46, fall 151, lie 152. The port runs them with the
+soldiers' AI and these motions (`guard::Anim::MARINE`); the crowd's own
+perception (`-t 2500 7000`) and reactions are not ported.
+
 ## Not yet ported
 
 - the per-guard "!" length (from the action's motion);
