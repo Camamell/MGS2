@@ -172,6 +172,10 @@ pub struct Guard {
     path: Vec<Vec3>,
     repath: u32,
     attack: Attack,
+    /// `-l` (As16:0x1c4 by difficulty: 3000..6000 mm). Taken here as the
+    /// distance at which the guard hears Snake running; not yet confirmed
+    /// in the code.
+    pub hearing: f32,
 }
 
 /// Shooting (`FUN_00228710`/`FUN_00228F80`): aim for 21 frames, then a
@@ -219,6 +223,7 @@ pub fn from_spawn(s: &Spawn, default_vision: f32) -> Option<(Guard, Vec3)> {
         path: Vec::new(),
         repath: 0,
         attack: Attack::default(),
+        hearing: s.opt_int(b'l', 0).filter(|d| *d > 0).map_or(3000.0, |d| d as f32),
     };
     Some((guard, pos))
 }
@@ -368,6 +373,7 @@ pub fn think(
     let Ok((snake_body, player)) = snake.single() else { return };
     let snake_pos = snake_body.pos;
     let snake_dead = player.dead();
+    let snake_running = player.speed >= crate::player::RUN_SPEED;
     let changed = std::mem::take(&mut phase.changed);
     let mut highest = 0i32;
 
@@ -402,6 +408,14 @@ pub fn think(
             g.tracking = Some(0);
         }
         update_meter(&mut g, phase.kind);
+        // Footsteps: running within earshot draws a look.
+        if snake_running
+            && g.level < 2
+            && body.pos.distance(snake_pos) < g.hearing
+            && matches!(g.state, State::Patrol | State::Wait(_) | State::Return)
+        {
+            g.state = State::Investigate { target: snake_pos, sub: 0, timer: 0 };
+        }
 
         // Brain switches with the phase (inits FUN_00227E00/229F98/22C978).
         if changed {

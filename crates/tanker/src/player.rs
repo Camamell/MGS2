@@ -22,7 +22,7 @@ pub mod motion {
 
 /// Travel speeds measured from those motions' root tracks (mm/s).
 const WALK_SPEED: f32 = 1250.0;
-const RUN_SPEED: f32 = 3050.0;
+pub const RUN_SPEED: f32 = 3050.0;
 const CROUCH_SPEED: f32 = 1250.0;
 const TURN_RATE: f32 = TAU * 1.5;
 pub const RADIUS: f32 = 300.0;
