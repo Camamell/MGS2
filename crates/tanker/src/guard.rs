@@ -138,10 +138,10 @@ pub enum State {
     Search { wait: u32 },
     /// Going back to the route after alert/evasion/investigation.
     Return,
-    /// Hit by a tranquilizer dart: `delay` frames of staying on his feet
-    /// (body hits), then falls (motion 113) and sleeps (motion 114) until
-    /// `timer` reaches [`SLEEP_FRAMES`].
-    Asleep { delay: f32, timer: f32 },
+    /// Darted or knocked out: `delay` frames of staying on his feet (dart
+    /// body hits), then falls (motion 113) and lies (motion 114) until
+    /// `timer` reaches `wake`.
+    Asleep { delay: f32, timer: f32, wake: f32 },
 }
 
 mod sleep {
@@ -236,8 +236,25 @@ impl Guard {
     /// A dart hit: head shots work at once.
     pub fn tranquilize(&mut self, head: bool) {
         if !self.asleep() {
-            self.state = State::Asleep { delay: if head { 0.0 } else { DART_DELAY }, timer: 0.0 };
+            self.state = State::Asleep { delay: if head { 0.0 } else { DART_DELAY }, timer: 0.0, wake: SLEEP_FRAMES };
             self.path.clear();
+        }
+    }
+
+    /// Knocked out by punches: down at once, out for half as long as a
+    /// dart (not from the game yet).
+    pub fn knock_out(&mut self) {
+        self.state = State::Asleep { delay: 0.0, timer: 0.0, wake: SLEEP_FRAMES / 2.0 };
+        self.path.clear();
+    }
+
+    /// A punch that does not knock him out: he turns on Snake.
+    pub fn punched(&mut self, from: Vec3) {
+        if !self.asleep() {
+            self.last_seen = Some(from);
+            if !matches!(self.state, State::Chase | State::Discovery { .. }) {
+                self.state = State::Discovery { timer: 0 };
+            }
         }
     }
 
@@ -378,7 +395,7 @@ pub fn think(
     let mut highest = 0i32;
 
     for (mut g, mut body) in &mut guards {
-        if let State::Asleep { delay, timer } = g.state {
+        if let State::Asleep { delay, timer, wake } = g.state {
             let frames = dt * 60.0;
             g.level = 0;
             g.meter = 0;
@@ -387,10 +404,10 @@ pub fn think(
                 // Groggy: stands and sways until the dart takes effect.
                 body.play(motion::IDLE);
                 body.yaw += (delay / 20.0).sin() * dt;
-                g.state = State::Asleep { delay: delay - frames, timer };
-            } else if timer < SLEEP_FRAMES {
+                g.state = State::Asleep { delay: delay - frames, timer, wake };
+            } else if timer < wake {
                 body.play(if timer < sleep::FALL_FRAMES { sleep::FALL } else { sleep::LIE });
-                g.state = State::Asleep { delay: 0.0, timer: timer + frames };
+                g.state = State::Asleep { delay: 0.0, timer: timer + frames, wake };
             } else {
                 g.last_seen = None;
                 if let Some(wp) = waypoint(&game, g.route, g.node) {

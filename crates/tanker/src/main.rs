@@ -8,6 +8,7 @@
 mod body;
 mod bullet;
 mod collision;
+mod contact;
 mod gcl;
 mod guard;
 mod items;
@@ -69,6 +70,9 @@ struct Cli {
     /// Aim the M9 at this time (seconds) and fire half a second later.
     #[arg(long)]
     fire_at: Option<f32>,
+    /// Punch at these times (seconds, comma separated).
+    #[arg(long, value_delimiter = ',')]
+    punch_at: Vec<f32>,
     /// Put Snake here instead (mm, `--snake-at=x,y,z`; for testing).
     #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
     snake_at: Option<Vec<f32>>,
@@ -416,6 +420,7 @@ fn main() -> Result<()> {
     .insert_resource(NewCast(Mutex::new(Some(level.cast))))
     .insert_resource(bullet::Rng(0x2001_1113))
     .init_resource::<items::Inventory>()
+    .init_resource::<contact::Punches>()
     .insert_resource(Session {
         disc: Mutex::new(disc),
         difficulty: cli.difficulty,
@@ -437,7 +442,9 @@ fn main() -> Result<()> {
             spawn_level.run_if(resource_exists::<NewCast>),
             player::control,
             items::pickup,
+            contact::punch,
             guard::think,
+            contact::separate,
             bullet::fly,
             items::sync_rations,
             game_over,
@@ -461,6 +468,9 @@ fn main() -> Result<()> {
     }
     if let Some(t) = cli.fire_at {
         app.insert_resource(player::AutoFire(t));
+    }
+    if !cli.punch_at.is_empty() {
+        app.insert_resource(contact::AutoPunch(cli.punch_at.clone()));
     }
     if let Some(path) = cli.screenshot {
         app.insert_resource(Capture { path, at: cli.shot_at, taken: false }).add_systems(Last, capture);
@@ -833,7 +843,7 @@ fn hud(
     let message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
     **t = format!(
         "{}  {}  guards {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
-         WASD move  Shift walk  C crouch  Space action  F aim/fire M9  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
+         WASD move  Shift walk  C crouch  Space action  F aim/fire M9  V punch  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
         game.data.name,
         status,
         guards.iter().count(),
