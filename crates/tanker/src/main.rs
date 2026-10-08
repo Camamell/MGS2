@@ -640,19 +640,19 @@ fn spawn_level(
         Some((model, motions, pos, yaw)) => {
             let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
             commands.entity(e).insert(Player::new(session.difficulty));
-            weapons.extend(model_index(data, "m92").map(|m| (e, m, true)));
+            weapons.extend(model_index(data, "m92").map(|m| (e, m, true, body::pistol_grip())));
         }
         None => error!("Snake's model (sna_def) not found"),
     }
     for (g, model, motions, pos) in cast.guards {
         let e = spawn(&mut commands, model, Body::new(pos, 0.0, model, motions));
         commands.entity(e).insert(g);
-        weapons.extend(model_index(data, "aks").map(|m| (e, m, false)));
+        weapons.extend(model_index(data, "aks").map(|m| (e, m, false, body::rifle_grip())));
     }
-    for (owner, model, when_aiming) in weapons {
+    for (owner, model, when_aiming, grip) in weapons {
         let m = &data.models[model].1;
         let e = scene::spawn_model(&mut commands, m, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
-        commands.entity(e).insert(body::Held { owner, object: body::RIGHT_HAND, when_aiming, grip: body::barrel_forward() });
+        commands.entity(e).insert(body::Held { owner, object: body::RIGHT_HAND, when_aiming, grip });
     }
 }
 

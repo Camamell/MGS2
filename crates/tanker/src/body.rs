@@ -75,9 +75,16 @@ pub struct Held {
     pub grip: Quat,
 }
 
-/// Turns a barrel along -y to point forward (+z) from the hand.
-pub fn barrel_forward() -> Quat {
+/// Grip for the AKS (barrel along -y in the model): points it forward (+z)
+/// from the guard's hand.
+pub fn rifle_grip() -> Quat {
     Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+}
+
+/// Grip for the M9: as modelled (it is built in the hand's space; the AKS's
+/// turn above may mean the game holds the rifle from another joint).
+pub fn pistol_grip() -> Quat {
+    Quat::IDENTITY
 }
 
 /// Right hand joint of both Snake (`sna_def`) and the soldiers (`gbs_def`):
