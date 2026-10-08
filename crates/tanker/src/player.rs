@@ -20,6 +20,10 @@ pub mod motion {
     pub const CROUCH_WALK: usize = 53;
     /// Collapsing onto his side (270 frames, hip 860 -> 160 mm).
     pub const DEATH: usize = 13;
+    /// Two-handed aiming stance.
+    pub const AIM: usize = 2;
+    /// A jab.
+    pub const PUNCH: usize = 23;
 }
 
 /// Travel speeds measured from those motions' root tracks (mm/s).
@@ -47,6 +51,8 @@ pub struct Player {
     pub very_easy: bool,
     /// Holding the M9 up.
     pub aiming: bool,
+    /// Seconds left of an action (a punch) that holds Snake in place.
+    pub busy: f32,
 }
 
 /// Maximum life by difficulty, from `n_title`'s difficulty select
@@ -129,6 +135,11 @@ pub fn control(
         body.play_once(motion::DEATH);
         return;
     }
+    if p.busy > 0.0 {
+        p.busy -= dt;
+        p.speed = 0.0;
+        return;
+    }
 
     // M9: hold F to aim along the camera's view, release to fire a dart.
     let t = time.elapsed_secs();
@@ -138,7 +149,7 @@ pub fn control(
         p.aiming = true;
         p.speed = 0.0;
         body.yaw = turn_toward(body.yaw, cam.yaw + std::f32::consts::PI, TURN_RATE * 2.0 * dt);
-        body.play(motion::IDLE);
+        body.play(motion::AIM);
         return;
     }
     if std::mem::take(&mut p.aiming) {

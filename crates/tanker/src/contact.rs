@@ -16,6 +16,8 @@ const PUNCH_ARC: f32 = 0.8;
 const KNOCKOUT_HITS: u32 = 3;
 /// A combo breaks if the next punch comes later than this (seconds).
 const COMBO_GAP: f32 = 0.8;
+/// How long a punch holds Snake in place (seconds).
+const PUNCH_TIME: f32 = 0.2;
 
 /// Pushes overlapping characters apart horizontally (Snake and guards,
 /// guards among themselves); sleeping guards are stepped over.
@@ -93,7 +95,7 @@ pub fn punch(
     keys: Res<ButtonInput<KeyCode>>,
     auto: Option<ResMut<AutoPunch>>,
     mut punches: ResMut<Punches>,
-    snake: Query<(&Body, &Player), Without<Guard>>,
+    mut snake: Query<(&mut Body, &mut Player), Without<Guard>>,
     mut guards: Query<(Entity, &Body, &mut Guard), Without<Player>>,
 ) {
     let scripted = auto.is_some_and(|mut a| {
@@ -106,10 +108,12 @@ pub fn punch(
     if !keys.just_pressed(KeyCode::KeyV) && !scripted {
         return;
     }
-    let Ok((sb, p)) = snake.single() else { return };
-    if p.dead() || p.aiming {
+    let Ok((mut sb, mut p)) = snake.single_mut() else { return };
+    if p.dead() || p.aiming || p.busy > 0.0 {
         return;
     }
+    sb.play_once(crate::player::motion::PUNCH);
+    p.busy = PUNCH_TIME;
     let now = time.elapsed_secs();
     let fwd = sb.forward();
     let hit = guards.iter_mut().find(|(_, gb, g)| {

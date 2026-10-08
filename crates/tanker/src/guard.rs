@@ -45,6 +45,8 @@ mod motion {
     pub const IDLE: usize = 0;
     pub const WALK: usize = 1;
     pub const RUN: usize = 2;
+    /// Rifle raised, aiming.
+    pub const AIM: usize = 4;
 }
 
 const WALK_SPEED: f32 = 1330.0;
@@ -690,7 +692,7 @@ fn alert_brain(
     }
     if g.level == 3 && body.pos.distance(snake) < FIRE_RANGE && !snake_dead {
         g.path.clear();
-        body.play(motion::IDLE);
+        body.play(motion::AIM);
         face(body, snake, dt);
         if !a.firing {
             a.aim += frames;

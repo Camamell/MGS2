@@ -60,6 +60,12 @@ struct Cli {
     /// instead of the best guess.
     #[arg(long)]
     archive: Option<String>,
+    /// Contact sheet: save one screenshot per motion into this directory
+    /// (with `--model`, `--frame`, and `--motions first,last`).
+    #[arg(long)]
+    sheet: Option<PathBuf>,
+    #[arg(long, value_delimiter = ',')]
+    motions: Vec<usize>,
     /// Apply joint quaternions conjugated (handedness experiment).
     #[arg(long)]
     conj: bool,
@@ -188,11 +194,60 @@ fn main() -> Result<()> {
     if let Some(c) = cli.cam.filter(|c| c.len() == 6) {
         app.insert_resource(CamOverride(Vec3::new(c[0], c[1], c[2]) * SCALE, Vec3::new(c[3], c[4], c[5]) * SCALE));
     }
-    if let Some(path) = cli.screenshot {
+    if let Some(dir) = cli.sheet {
+        let motions: Vec<usize> = match cli.motions.as_slice() {
+            [a, b] => (*a..=*b).collect(),
+            other => other.to_vec(),
+        };
+        std::fs::create_dir_all(&dir)?;
+        app.insert_resource(Sheet { dir, motions, step: 0, shot: false }).add_systems(Last, sheet);
+    } else if let Some(path) = cli.screenshot {
         app.insert_resource(Capture { path, frame: 0 }).add_systems(Last, capture);
     }
     app.run();
     Ok(())
+}
+
+#[derive(Resource)]
+struct Sheet {
+    dir: PathBuf,
+    motions: Vec<usize>,
+    step: usize,
+    shot: bool,
+}
+
+/// `--sheet`: after the start-up wait, poses the browsed model in each
+/// motion in turn and saves `m<index>.png` for each, then exits.
+fn sheet(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut s: ResMut<Sheet>,
+    mut v: ResMut<Viewer>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    let t = time.elapsed_secs() - 8.0;
+    if t < 0.0 {
+        return;
+    }
+    let slot = (t / 0.4) as usize;
+    if slot < s.step {
+        return;
+    }
+    let Some(&m) = s.motions.get(s.step) else {
+        if t > s.motions.len() as f32 * 0.4 + 1.0 {
+            exit.write(AppExit::Success);
+        }
+        return;
+    };
+    if !s.shot {
+        v.anim.motion = m;
+        s.shot = true;
+    } else if t - slot as f32 * 0.4 > 0.25 {
+        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(s.dir.join(format!("m{m:03}.png"))));
+        s.shot = false;
+        s.step += 1;
+    }
 }
 
 fn apply_cam_override(
