@@ -146,11 +146,11 @@ pub fn control(
     auto_fire: Option<Res<AutoFire>>,
     mut inv: ResMut<crate::items::Inventory>,
     mut game: ResMut<Game>,
-    cam: Query<&FollowCam>,
+    cam: Query<&Transform, With<FollowCam>>,
     mut q: Query<(&mut Player, &mut Body)>,
 ) {
     let Ok((mut p, mut body)) = q.single_mut() else { return };
-    let Ok(cam) = cam.single() else { return };
+    let Ok(cam_tf) = cam.single() else { return };
     let dt = time.delta_secs().min(0.05);
     p.hurt = (p.hurt - dt).max(0.0);
     if p.dead() {
@@ -215,7 +215,11 @@ pub fn control(
     let walking = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
     // Camera-relative direction on the ground plane.
-    let fwd = Vec2::new(-cam.yaw.sin(), -cam.yaw.cos());
+    // Screen-relative: up on the stick is away from the camera (its view
+    // direction, or its up vector when it looks straight down).
+    let (f, u) = (cam_tf.forward(), cam_tf.up());
+    let flat = Vec2::new(f.x, f.z);
+    let fwd = if flat.length() > 0.3 { flat.normalize() } else { Vec2::new(u.x, u.z).normalize_or(Vec2::NEG_Y) };
     let right = Vec2::new(-fwd.y, fwd.x);
     let mut dir = (fwd * input.y + right * input.x).normalize_or_zero();
     // Walking in through a door: straight ahead, no control yet.
