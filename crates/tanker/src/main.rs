@@ -280,9 +280,9 @@ fn prepare(
         vm.run(&script.main);
         let (gm, gmar) = (model_index(&data, "gbs_def"), motions_index(&data, "gbs"));
         // An actor created again under the same name replaces the first.
-        let name = |s: &gcl::Spawn| s.args.first().and_then(|v| v.int());
+        let actor = |s: &gcl::Spawn| s.args.first().and_then(|v| v.int());
         let soldiers: Vec<&gcl::Spawn> = vm.spawns.iter().filter(|s| s.kind == guard::GUARD_ACTOR).collect();
-        let last = |i: usize| soldiers[i + 1..].iter().all(|o| name(o) != name(soldiers[i]));
+        let last = |i: usize| soldiers[i + 1..].iter().all(|o| actor(o) != actor(soldiers[i]));
         for s in (0..soldiers.len()).filter(|i| last(*i)).map(|i| soldiers[i]) {
             if let (Some((g, mut p)), Some(m)) = (guard::from_spawn(s, 6000.0), gm) {
                 if let Some(col) = &collision {
