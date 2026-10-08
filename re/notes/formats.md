@@ -159,6 +159,14 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   streamed audio) and kind 4 (subtitles). Subtitle payload: `u32 size`, then
   records `u32 start frame, u32 end frame, u32 0, u32 length`, text with
   `0x80 '|'` line breaks.
+- Event packet sub-records (`u32 type, u32 size`), first look at demo 0
+  (d01t):
+  - `0x00000003` (0x40 bytes, one per packet): looks like the camera:
+    a key id, floats (fov or roll?), then eye xyz and target xyz (f32, w = 0);
+    d01t's coordinates are far from the tanker (the bridge prologue).
+  - `0x80000001` (0x10): paired key ids (camera interpolation?).
+  - `0x80000006` / `0x80000004`: actor creation / model loads (hashes).
+  - `0x80000007`: per-actor data every packet, variable size (motion?).
 
 ## mar (motions): joint rotations and root height done
 
