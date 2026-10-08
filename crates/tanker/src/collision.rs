@@ -112,22 +112,46 @@ impl Collision {
     /// Walls are vertical, so the test is 2D with a height check at the
     /// crossing point.
     pub fn line_blocked(&self, a: Vec3, b: Vec3) -> bool {
+        self.ray(a, b).is_some()
+    }
+
+    /// First wall or floor crossed by the segment `a`..`b`, as a fraction of
+    /// its length. Floors block too, so nobody sees through a deck.
+    pub fn ray(&self, a: Vec3, b: Vec3) -> Option<f32> {
         let (p, r) = (Vec2::new(a.x, a.z), Vec2::new(b.x - a.x, b.z - a.z));
-        self.walls.iter().any(|w| {
+        let walls = self.walls.iter().filter_map(|w| {
             let s = w.b - w.a;
             let denom = r.perp_dot(s);
             if denom.abs() < 1e-6 {
-                return false;
+                return None;
             }
             let q = w.a - p;
             let t = q.perp_dot(s) / denom;
             let u = q.perp_dot(r) / denom;
             if !(0.0..=1.0).contains(&t) || !(0.0..=1.0).contains(&u) {
-                return false;
+                return None;
             }
             let y = a.y + (b.y - a.y) * t;
-            y > w.bottom && y < w.top
-        })
+            (y > w.bottom && y < w.top).then_some(t)
+        });
+        let d = b - a;
+        let (lo, hi) = (p.min(p + r), p.max(p + r));
+        let floors = self.floors.iter().filter_map(|f| {
+            if hi.cmplt(f.min).any() || lo.cmpgt(f.max).any() {
+                return None;
+            }
+            let denom = f.normal.dot(d);
+            if denom.abs() < 1e-6 {
+                return None;
+            }
+            let t = f.normal.dot(f.point - a) / denom;
+            if !(0.0..=1.0).contains(&t) {
+                return None;
+            }
+            let h = a + d * t;
+            inside(&f.outline, Vec2::new(h.x, h.z)).then_some(t)
+        });
+        walls.chain(floors).min_by(f32::total_cmp)
     }
 }
 

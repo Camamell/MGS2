@@ -83,6 +83,8 @@ pub struct FollowCam {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    /// Distance after pulling in for obstacles.
+    pub current: f32,
     /// Follow the n-th guard instead of Snake (debugging).
     pub guard: Option<usize>,
 }
@@ -188,6 +190,7 @@ pub fn follow_camera(
     motion: Res<AccumulatedMouseMotion>,
     player: Query<&Body, With<Player>>,
     guards: Query<&Body, (With<crate::guard::Guard>, Without<Player>)>,
+    game: Res<Game>,
     mut cam: Query<(&mut Transform, &mut FollowCam)>,
 ) {
     let Ok((mut tf, mut c)) = cam.single_mut() else { return };
@@ -209,7 +212,17 @@ pub fn follow_camera(
     }
     let target = b.pos * SCALE + Vec3::Y * 0.9;
     let back = Vec3::new(c.yaw.sin(), 0.0, c.yaw.cos()) * c.pitch.cos() + Vec3::Y * c.pitch.sin();
-    tf.translation = target + back * c.distance;
+    // Keep walls and decks out of the way: pull in at once when blocked,
+    // ease back out when clear.
+    let mut want = c.distance;
+    if let Some(col) = &game.collision {
+        let (from, to) = (target / SCALE, (target + back * c.distance) / SCALE);
+        if let Some(t) = col.ray(from, to) {
+            want = (c.distance * t - 0.3).max(0.8);
+        }
+    }
+    c.current = if want < c.current { want } else { c.current + (want - c.current) * (dt * 3.0).min(1.0) };
+    tf.translation = target + back * c.current;
     tf.look_at(target, Vec3::Y);
 }
 

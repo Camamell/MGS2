@@ -279,7 +279,7 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         Transform::default(),
-        FollowCam { yaw: start.cam_yaw, pitch: start.cam_pitch, distance: start.cam_dist, guard: start.follow_guard },
+        FollowCam { yaw: start.cam_yaw, pitch: start.cam_pitch, distance: start.cam_dist, current: start.cam_dist, guard: start.follow_guard },
     ));
     commands.insert_resource(GlobalAmbientLight { brightness: 400.0, ..default() });
     commands.spawn((
