@@ -554,6 +554,16 @@ fn main() -> Result<()> {
         _ => None,
     };
     level.game.prime_traps = arrival.is_none();
+    // --snake-at wins over a script that places Snake itself.
+    if let (Some(at), Some(snake)) = (cli.snake_at.as_ref().filter(|a| a.len() == 3), level.cast.snake.as_mut()) {
+        let mut pos = Vec3::new(at[0], at[1], at[2]);
+        if let Some(y) = level.game.collision.as_ref().and_then(|c| c.floor_below(pos.x, pos.z, pos.y + 2000.0)) {
+            pos.y = y;
+        }
+        let yaw = cli.snake_dir.map_or(snake.3, |d| d as f32 / 4096.0 * std::f32::consts::TAU);
+        (snake.2, snake.3) = (pos, yaw);
+        level.game.snake_start = (pos, yaw);
+    }
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
