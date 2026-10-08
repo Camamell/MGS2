@@ -142,6 +142,8 @@ pub enum State {
     /// body hits), then falls (motion 113) and lies (motion 114) until
     /// `timer` reaches `wake`.
     Asleep { delay: f32, timer: f32, wake: f32 },
+    /// Saw a comrade down: goes over and wakes him (raising caution).
+    Rouse { sleeper: Entity, at: Vec3 },
 }
 
 mod sleep {
@@ -384,8 +386,15 @@ pub fn think(
     mut phase: ResMut<Phase>,
     mut rng: ResMut<Rng>,
     snake: Query<(&Body, &Player), Without<Guard>>,
-    mut guards: Query<(&mut Guard, &mut Body)>,
+    mut guards: Query<(Entity, &mut Guard, &mut Body)>,
 ) {
+    // Comrades lying on the floor (only after they have fallen).
+    let sleepers: Vec<(Entity, Vec3)> = guards
+        .iter()
+        .filter(|(_, g, _)| matches!(g.state, State::Asleep { delay, timer, .. } if delay <= 0.0 && timer >= sleep::FALL_FRAMES))
+        .map(|(e, _, b)| (e, b.pos))
+        .collect();
+    let mut woken = Vec::new();
     let dt = time.delta_secs().min(0.05);
     let Ok((snake_body, player)) = snake.single() else { return };
     let snake_pos = snake_body.pos;
@@ -394,7 +403,7 @@ pub fn think(
     let changed = std::mem::take(&mut phase.changed);
     let mut highest = 0i32;
 
-    for (mut g, mut body) in &mut guards {
+    for (me, mut g, mut body) in &mut guards {
         if let State::Asleep { delay, timer, wake } = g.state {
             let frames = dt * 60.0;
             g.level = 0;
@@ -425,6 +434,39 @@ pub fn think(
             g.tracking = Some(0);
         }
         update_meter(&mut g, phase.kind);
+        // A comrade down in sight: go and wake him; the alarm goes to
+        // caution.
+        if phase.kind != PhaseKind::Alert
+            && g.level < 3
+            && matches!(g.state, State::Patrol | State::Wait(_) | State::Return | State::Investigate { .. })
+        {
+            let seen = sleepers.iter().find(|(e, p)| *e != me && perceive(&g, &body, *p, &game) == 3);
+            if let Some(&(sleeper, at)) = seen {
+                plan(&mut g, body.pos, at, &game);
+                g.state = State::Rouse { sleeper, at };
+                if phase.kind == PhaseKind::Infiltration {
+                    phase.caution = phase.caution_time;
+                    phase.set(PhaseKind::Caution);
+                }
+            }
+        }
+        if let State::Rouse { sleeper, at } = g.state {
+            if g.level == 3 {
+                g.state = State::Discovery { timer: 0 };
+            } else {
+                body.play(motion::RUN);
+                if follow(&mut g, &mut body, RUN_SPEED, 700.0, dt, &game) {
+                    face(&mut body, at, dt);
+                    woken.push(sleeper);
+                    if let Some(wp) = waypoint(&game, g.route, g.node) {
+                        plan(&mut g, body.pos, Vec3::from(wp.position), &game);
+                    }
+                    g.state = State::Return;
+                }
+                highest = highest.max(i32::from(g.meter));
+                continue;
+            }
+        }
         // Footsteps: running within earshot draws a look.
         if snake_running
             && g.level < 2
@@ -477,6 +519,15 @@ pub fn think(
             _ => normal_brain(&mut g, &mut body, snake_pos, dt, &game),
         }
         highest = highest.max(i32::from(g.meter));
+    }
+
+    // Kicked awake: up at once.
+    for e in woken {
+        if let Ok((_, mut g, _)) = guards.get_mut(e) {
+            if let State::Asleep { wake, .. } = g.state {
+                g.state = State::Asleep { delay: 0.0, timer: wake, wake };
+            }
+        }
     }
 
     manager(&mut phase, highest);
@@ -596,7 +647,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
             }
         }
         State::Chase | State::Search { .. } => g.state = State::Return,
-        State::Asleep { .. } => {}
+        State::Asleep { .. } | State::Rouse { .. } => {}
     }
 }
 

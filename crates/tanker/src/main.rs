@@ -76,6 +76,9 @@ struct Cli {
     /// Put Snake here instead (mm, `--snake-at=x,y,z`; for testing).
     #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
     snake_at: Option<Vec<f32>>,
+    /// Snake's facing with `--snake-at` (4096 = full turn, 0 = +z).
+    #[arg(long, allow_hyphen_values = true)]
+    snake_dir: Option<i32>,
     /// Open the n-th door of the stage after `--door-at` seconds (testing).
     #[arg(long)]
     use_door: Option<usize>,
@@ -401,7 +404,8 @@ fn main() -> Result<()> {
         set_snake_start(&mut banks, e.position, e.direction);
     }
     if let Some(at) = cli.snake_at.as_ref().filter(|a| a.len() == 3) {
-        set_snake_start(&mut banks, [at[0], at[1], at[2]], entry.map_or(0, |e| e.direction));
+        let dir = cli.snake_dir.unwrap_or(entry.map_or(0, |e| e.direction));
+        set_snake_start(&mut banks, [at[0], at[1], at[2]], dir);
     }
     // Coming from another gameplay stage (not a cutscene `d..t`), Snake
     // walks in through the door.
