@@ -148,6 +148,31 @@ const DOOR_REACH: f32 = 900.0;
 struct Cast {
     snake: Option<(usize, Option<usize>, Vec3, f32)>,
     guards: Vec<(Guard, usize, Option<usize>, Vec3)>,
+    props: Vec<Prop>,
+}
+
+/// A static model placed by the script: `chara 0x7a8ec1` (scenery such as
+/// floors, furniture and stage-to-stage passages), `0xd1279a` (plants) and
+/// `0xcba568` (breakable glass, first model), all with `-m model -r rx ry
+/// rz -p x y z [-s sx sy sz]` (angles in 4096ths, scale in percent).
+struct Prop {
+    model: usize,
+    transform: Transform,
+}
+
+const PROP_ACTORS: &[u32] = &[0x7A8EC1, 0xD1279A, 0xCBA568];
+
+fn prop(s: &gcl::Spawn, data: &StageData) -> Option<Prop> {
+    let hash = s.opt(b'm')?.first()?.int()? as u32 & 0x00FF_FFFF;
+    let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == hash)?;
+    let v = |l: u8, i: usize, d: i32| s.opt_int(l, i).unwrap_or(d) as f32;
+    let angle = |i| v(b'r', i, 0) / 4096.0 * std::f32::consts::TAU;
+    let transform = Transform {
+        translation: Vec3::new(v(b'p', 0, 0), v(b'p', 1, 0), v(b'p', 2, 0)) * SCALE,
+        rotation: Quat::from_euler(EulerRot::YXZ, angle(1), angle(0), angle(2)),
+        scale: Vec3::new(v(b's', 0, 100), v(b's', 1, 100), v(b's', 2, 100)) / 100.0,
+    };
+    Some(Prop { model, transform })
 }
 
 /// A stage ready to be put into the world.
@@ -226,6 +251,7 @@ fn prepare(
     let mut phase = Phase::default();
     let mut doors = Vec::new();
     let mut traps = Vec::new();
+    let mut props = Vec::new();
     let mut banks_after = banks.clone();
     // Snake's start: the player actor's `-p x y z -d dir`, which read the
     // start variables; else the start variables themselves.
@@ -262,6 +288,7 @@ fn prepare(
         }
         phase = Phase::from_manager(vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR));
         traps = vm.traps.iter().map(|t| (t.clone(), false)).collect();
+        props = vm.spawns.iter().filter(|s| PROP_ACTORS.contains(&s.kind)).filter_map(|s| prop(s, &data)).collect();
         eprintln!(
             "{name}: script created {} actors, {} guards, {} doors, {} traps",
             vm.spawns.len(),
@@ -302,7 +329,7 @@ fn prepare(
     } else {
         game.entrance_done();
     }
-    Ok(Level { game, phase, cast: Cast { snake, guards } })
+    Ok(Level { game, phase, cast: Cast { snake, guards, props } })
 }
 
 fn main() -> Result<()> {
@@ -342,7 +369,10 @@ fn main() -> Result<()> {
     if let Some(at) = cli.snake_at.as_ref().filter(|a| a.len() == 3) {
         set_snake_start(&mut banks, [at[0], at[1], at[2]], entry.map_or(0, |e| e.direction));
     }
-    let level = prepare(&mut disc, &cli.stage, banks, false, cli.spawns, cli.vision)?;
+    // Coming from another gameplay stage (not a cutscene `d..t`), Snake
+    // walks in through the door.
+    let walk_in = arrival.is_some() && from.as_deref().is_some_and(|f| f.starts_with('w'));
+    let level = prepare(&mut disc, &cli.stage, banks, walk_in, cli.spawns, cli.vision)?;
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -450,6 +480,11 @@ fn spawn_level(
     let unlit = true;
     let data = &game.data;
     scene::spawn_level(&mut commands, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+    for p in cast.props {
+        let model = &data.models[p.model].1;
+        let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        commands.entity(e).insert(p.transform);
+    }
     let mut spawn = |commands: &mut Commands, model: usize, bundle: Body| {
         scene::spawn_model(
             commands,

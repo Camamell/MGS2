@@ -3,6 +3,7 @@
 use std::f32::consts::TAU;
 
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::prelude::*;
 use mgs2_bevy::scene::SCALE;
 
@@ -207,6 +208,9 @@ pub fn follow_camera(
     guards: Query<&Body, (With<crate::guard::Guard>, Without<Player>)>,
     game: Res<Game>,
     mut cam: Query<(&mut Transform, &mut FollowCam)>,
+    mut rays: MeshRayCast,
+    parents: Query<&ChildOf>,
+    bodies: Query<(), With<Body>>,
 ) {
     let Ok((mut tf, mut c)) = cam.single_mut() else { return };
     let b = match c.guard {
@@ -231,25 +235,39 @@ pub fn follow_camera(
     let mut back = dir(c.yaw);
     let mut want = c.distance;
     if let Some(col) = &game.collision {
-        let from = target / SCALE;
-        // Where the camera can be along `back`: under the ceiling (the floor
-        // above), flattening the view rather than closing in, then pulled in
-        // in front of walls.
-        let place = |back: Vec3| -> (Vec3, f32) {
-            let mut cam = from + back * c.distance / SCALE;
-            if let Some(t) = col.ray(from, from + Vec3::Y * 20000.0) {
-                let ceiling = from.y + t * 20000.0 - 300.0;
-                cam.y = cam.y.min(ceiling.max(from.y));
+        // First obstacle between two points (metres) as a fraction: level
+        // meshes (front faces: ceilings from below, walls facing Snake) and
+        // the collision walls and floors.
+        let not_character = |e: Entity| parents.get(e).map_or(true, |p| !bodies.contains(p.parent()));
+        let settings = MeshRayCastSettings::default()
+            .with_filter(&not_character)
+            .with_visibility(RayCastVisibility::Any);
+        let mut obstacle = |a: Vec3, b: Vec3| -> Option<f32> {
+            let len = a.distance(b);
+            let mesh = Dir3::new(b - a)
+                .ok()
+                .and_then(|d| rays.cast_ray(Ray3d::new(a, d), &settings).first().map(|(_, h)| h.distance / len))
+                .filter(|t| *t <= 1.0);
+            let wall = col.ray(a / SCALE, b / SCALE);
+            mesh.into_iter().chain(wall).min_by(f32::total_cmp)
+        };
+        // Where the camera can be along `back`: under the ceiling, flattening
+        // the view rather than closing in, then pulled in front of walls.
+        let mut place = |back: Vec3| -> (Vec3, f32) {
+            let mut cam = target + back * c.distance;
+            if let Some(t) = obstacle(target, target + Vec3::Y * 20.0) {
+                let ceiling = target.y + t * 20.0 - 0.3;
+                cam.y = cam.y.min(ceiling.max(target.y));
             }
-            let offset = (cam - from) * SCALE;
+            let offset = cam - target;
             let mut d = offset.length();
-            if let Some(t) = col.ray(from, cam) {
+            if let Some(t) = obstacle(target, cam) {
                 d = (d * t - 0.3).max(0.8);
             }
             // Outside the playable area there are no walls to stop the
             // camera, so also require floor under it.
-            let at = from + offset.normalize_or(back) * d / SCALE;
-            if !col.floor_below(at.x, at.z, at.y).is_some_and(|y| y > from.y - 3000.0) {
+            let at = (target + offset.normalize_or(back) * d) / SCALE;
+            if !col.floor_below(at.x, at.z, at.y).is_some_and(|y| y > target.y / SCALE - 3000.0) {
                 d = d.min(0.8);
             }
             (offset.normalize_or(back), d)
