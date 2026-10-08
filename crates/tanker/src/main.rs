@@ -72,6 +72,12 @@ struct Cli {
     /// Aim the M9 at this time (seconds) and fire half a second later.
     #[arg(long)]
     fire_at: Option<f32>,
+    /// Start with the stage cameras off (F3 toggles).
+    #[arg(long)]
+    no_stage_cams: bool,
+    /// Press Space (grab a ledge / pull up) at this time (seconds).
+    #[arg(long)]
+    hang_at: Option<f32>,
     /// Call the Codec (as if K were pressed) at this time (seconds).
     #[arg(long)]
     codec_at: Option<f32>,
@@ -139,6 +145,8 @@ pub struct Game {
     pub codec_area: Option<(i32, u32)>,
     /// Incoming calls waiting to open.
     pub codec_calls: Vec<(i32, u32)>,
+    /// Ledges under railings Snake can hang from.
+    pub hang_lines: Vec<collision::HangLine>,
     /// Take the trap boxes Snake starts in as already entered (a start that
     /// is not an arrival, so nothing should fire for it).
     pub prime_traps: bool,
@@ -311,6 +319,7 @@ struct Start {
     cam_dist: f32,
     cam_pitch: f32,
     follow_guard: Option<usize>,
+    no_stage_cams: bool,
 }
 
 #[derive(Resource)]
@@ -452,8 +461,12 @@ fn prepare(
         cameras,
         codec_area: None,
         codec_calls: Vec::new(),
+        hang_lines: Vec::new(),
     };
     apply_codec(&mut game, &codec_reqs);
+    if let (Some(h), Some(c)) = (&game.data.collision, &game.collision) {
+        game.hang_lines = collision::hang_lines(h, c);
+    }
     if walk_in {
         game.entrance = ENTRANCE_WALK;
     } else {
@@ -537,6 +550,7 @@ fn main() -> Result<()> {
         cam_dist: cli.cam_dist,
         cam_pitch: cli.cam_pitch.to_radians(),
         follow_guard: cli.follow_guard,
+        no_stage_cams: cli.no_stage_cams,
     })
     .add_systems(Startup, (setup, codec::setup_screen))
     .add_systems(
@@ -580,6 +594,9 @@ fn main() -> Result<()> {
     if let Some(t) = cli.fire_at {
         app.insert_resource(player::AutoFire(t, cli.aim_for));
     }
+    if let Some(t) = cli.hang_at {
+        app.insert_resource(player::AutoHang(t));
+    }
     if let Some(t) = cli.codec_at {
         app.insert_resource(codec::AutoCall(t));
     }
@@ -603,7 +620,7 @@ fn setup(mut commands: Commands, start: Res<Start>) {
             pitch: start.cam_pitch,
             distance: start.cam_dist,
             current: start.cam_dist,
-            scripted: true,
+            scripted: !start.no_stage_cams,
             look: Vec3::ZERO,
             guard: start.follow_guard,
         },

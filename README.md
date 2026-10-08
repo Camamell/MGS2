@@ -57,7 +57,7 @@ too.
 | Shift | walk |
 | C | crouch |
 | Z | prone / crawl (lower to the guards' eyes and bullets; fits under low gaps) |
-| Space | action: open doors (stage exits load the next stage); some traps react to it too |
+| Space | action: open doors (stage exits load the next stage); at a deck edge, hang over the railing (A/D shimmy, Space climb up, Z let go; the grip gauge runs down); some traps react to it too |
 | F (hold, release) | aim (A/D turn) and fire the M9 tranquilizer; aiming at an unaware guard from behind holds him up, and from his front he gives up his dog tags |
 | V | punch (three in a row knock a guard out) |
 | R | equip / unequip a ration (revives Snake at zero life) |

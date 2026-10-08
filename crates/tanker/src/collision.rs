@@ -155,6 +155,64 @@ impl Collision {
     }
 }
 
+/// A ledge Snake can hang from: the `.hzx` second wall set's segments with
+/// flag 0x800, which run 200-250 mm below a deck edge under its railing
+/// (their top is the deck floor). Units mm.
+#[derive(Clone, Debug)]
+pub struct HangLine {
+    pub a: Vec3,
+    pub b: Vec3,
+    /// Horizontal unit normal pointing away from the deck (where Snake
+    /// hangs).
+    pub out: Vec2,
+}
+
+pub const HANG_FLAG: u32 = 0x800;
+
+impl HangLine {
+    /// Parameter (0..1) and horizontal distance of the closest point to `p`.
+    pub fn closest(&self, p: Vec3) -> (f32, f32) {
+        let (a, b, q) = (Vec2::new(self.a.x, self.a.z), Vec2::new(self.b.x, self.b.z), Vec2::new(p.x, p.z));
+        let ab = b - a;
+        let t = if ab.length_squared() > 1.0 { ((q - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+        (t, (a + ab * t).distance(q))
+    }
+
+    pub fn length(&self) -> f32 {
+        Vec2::new(self.b.x - self.a.x, self.b.z - self.a.z).length()
+    }
+}
+
+pub fn hang_lines(hzx: &Hzx, col: &Collision) -> Vec<HangLine> {
+    let mut out = Vec::new();
+    for g in hzx.areas.iter().flat_map(|a| &a.groups) {
+        for w in g.walls2.iter().filter(|w| w.flags & HANG_FLAG != 0) {
+            for pair in w.points.windows(2) {
+                let ((pa, ha), (pb, hb)) = (pair[0], pair[1]);
+                let a = Vec3::new(pa[0], pa[1] + ha, pa[2]);
+                let b = Vec3::new(pb[0], pb[1] + hb, pb[2]);
+                let d = Vec2::new(b.x - a.x, b.z - a.z).normalize_or_zero();
+                if d == Vec2::ZERO {
+                    continue;
+                }
+                // The deck is on the side with floor at the ledge's top.
+                let n = Vec2::new(-d.y, d.x);
+                let mid = (a + b) * 0.5;
+                let deck = |s: f32| {
+                    let p = Vec2::new(mid.x, mid.z) + n * s * 600.0;
+                    col.floor_below(p.x, p.y, mid.y + 100.0).is_some_and(|y| (y - mid.y).abs() < 150.0)
+                };
+                let out_n = if deck(1.0) && !deck(-1.0) { -n } else { n };
+                let line = HangLine { a, b, out: out_n };
+                if !out.iter().any(|l: &HangLine| l.a == line.a && l.b == line.b) {
+                    out.push(line);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Even-odd point-in-polygon test.
 fn inside(poly: &[Vec2], p: Vec2) -> bool {
     let mut c = false;

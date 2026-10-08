@@ -27,6 +27,9 @@ pub mod motion {
     pub const AIM: usize = 2;
     /// A jab.
     pub const PUNCH: usize = 23;
+    /// Hanging by the hands, and moving along while hanging.
+    pub const HANG: usize = 20;
+    pub const SHIMMY: usize = 21;
 }
 
 /// Travel speeds measured from those motions' root tracks (mm/s).
@@ -34,6 +37,31 @@ const WALK_SPEED: f32 = 1250.0;
 pub const RUN_SPEED: f32 = 3050.0;
 const CROUCH_SPEED: f32 = 1250.0;
 const CRAWL_SPEED: f32 = 465.0;
+/// Hanging: ledge index, position along it (0..1) and the grip gauge
+/// (1 = full).
+#[derive(Clone, Copy, Debug)]
+pub struct Hang {
+    pub line: usize,
+    pub t: f32,
+    pub grip: f32,
+}
+
+/// How far from a ledge Snake can grab it, and where he hangs (mm).
+const HANG_REACH: f32 = 700.0;
+const HANG_OUT: f32 = 250.0;
+/// Feet below the deck while hanging (hands at deck level).
+const HANG_DROP: f32 = 1950.0;
+const SHIMMY_SPEED: f32 = 500.0;
+/// Grip gauge length at the starting grip level (an assumption).
+const GRIP_SECONDS: f32 = 25.0;
+/// Falls longer than this hurt (mm), and how much (life per 100 mm more).
+const SAFE_FALL: f32 = 2500.0;
+const FALL_DAMAGE: f32 = 2.0;
+
+/// `--hang-at`: press Space at this time (seconds), for tests.
+#[derive(Resource)]
+pub struct AutoHang(pub f32);
+
 /// Turning while aiming (radians per second).
 const AIM_TURN: f32 = 1.6;
 const TURN_RATE: f32 = TAU * 1.5;
@@ -62,6 +90,9 @@ pub struct Player {
     pub aiming: bool,
     /// Seconds left of an action (a punch) that holds Snake in place.
     pub busy: f32,
+    pub hang: Option<Hang>,
+    /// Height (mm) a fall started from, for landing damage.
+    pub fall_from: Option<f32>,
 }
 
 /// Maximum life by difficulty, from `n_title`'s difficulty select
@@ -146,6 +177,7 @@ pub fn control(
     keys: Res<ButtonInput<KeyCode>>,
     auto: Option<Res<AutoWalk>>,
     auto_fire: Option<Res<AutoFire>>,
+    auto_hang: Option<Res<AutoHang>>,
     mut inv: ResMut<crate::items::Inventory>,
     mut game: ResMut<Game>,
     cam: Query<&Transform, With<FollowCam>>,
@@ -164,6 +196,67 @@ pub fn control(
         p.busy -= dt;
         p.speed = 0.0;
         return;
+    }
+
+    // Hanging from a ledge under a railing.
+    let hang_key = keys.just_pressed(KeyCode::Space) || auto_hang.as_ref().is_some_and(|h| h.0 <= time.elapsed_secs() && time.elapsed_secs() < h.0 + dt * 1.5);
+    if let Some(mut h) = p.hang {
+        let line = game.hang_lines[h.line].clone();
+        p.speed = 0.0;
+        h.grip -= dt / GRIP_SECONDS;
+        let inward = -line.out;
+        if hang_key {
+            // Pull up onto the deck.
+            let at = line.a.lerp(line.b, h.t);
+            body.pos = Vec3::new(at.x + inward.x * 450.0, at.y, at.z + inward.y * 450.0);
+            p.hang = None;
+            return;
+        }
+        if h.grip <= 0.0 || keys.just_pressed(KeyCode::KeyZ) {
+            // Let go: falls from here (see the landing check below).
+            p.hang = None;
+            p.fall_from = Some(body.pos.y);
+            // Nothing below: over the side of the ship.
+            let below = game.collision.as_ref().and_then(|c| c.floor_below(body.pos.x, body.pos.z, body.pos.y));
+            if below.is_none() {
+                p.life = 0;
+                info!("Snake fell overboard");
+            }
+            return;
+        }
+        // Shimmy: A/D move left/right as Snake sees it (he faces the deck).
+        let mut dir = 0.0;
+        if keys.pressed(KeyCode::KeyA) {
+            dir -= 1.0;
+        }
+        if keys.pressed(KeyCode::KeyD) {
+            dir += 1.0;
+        }
+        let along = Vec2::new(line.b.x - line.a.x, line.b.z - line.a.z).normalize_or_zero();
+        // Snake's right when facing `inward`.
+        let right = Vec2::new(-inward.y, inward.x);
+        let sign = if along.dot(right) >= 0.0 { 1.0 } else { -1.0 };
+        let len = line.length().max(1.0);
+        h.t = (h.t + dir * sign * SHIMMY_SPEED * dt / len).clamp(0.0, 1.0);
+        let at = line.a.lerp(line.b, h.t);
+        body.pos = Vec3::new(at.x + line.out.x * HANG_OUT, at.y - HANG_DROP, at.z + line.out.y * HANG_OUT);
+        body.yaw = inward.x.atan2(inward.y);
+        body.play(if dir != 0.0 { motion::SHIMMY } else { motion::HANG });
+        p.hang = Some(h);
+        return;
+    }
+    if hang_key && !p.crouch && game.entrance <= 0.0 {
+        let near = game
+            .hang_lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| (i, l.closest(body.pos), l))
+            .filter(|(_, (_, d), l)| *d < HANG_REACH && (body.pos.y - l.a.y).abs() < 150.0)
+            .min_by(|a, b| a.1.1.total_cmp(&b.1.1));
+        if let Some((i, (t, _), _)) = near {
+            p.hang = Some(Hang { line: i, t, grip: 1.0 });
+            return;
+        }
     }
 
     // M9: hold F to aim along the camera's view, release to fire a dart.
@@ -268,6 +361,12 @@ pub fn control(
                 }
                 if next.y <= floor {
                     p.fall_speed = 0.0;
+                    if let Some(from) = p.fall_from.take() {
+                        let drop = from - floor;
+                        if drop > SAFE_FALL {
+                            p.damage(((drop - SAFE_FALL) / 100.0 * FALL_DAMAGE) as i32);
+                        }
+                    }
                 }
             }
             // No ground: refuse the move (the edge of the walkable area).

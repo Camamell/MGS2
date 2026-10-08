@@ -63,7 +63,9 @@ the letter marks a handler that also runs on unload):
   lifeboats on the 2F deck.
 - The area's +04/+0C pointers are navigation nodes (see Guards, and
   `hzx.rs`).
-- Open: the second wall/floor set (ids +0x400), element flags, header table
+- Hang ledges: second-set walls with flag 0x800 run 200-250 mm below a deck
+  edge under its railing (top = the deck floor); 24 in w00a.
+- Open: the rest of the second wall/floor set (ids +0x400), element flags, header table
   B, and the precomputed shortest-path matrices.
 
 ## gcx (GCL scripts): done (disassembly)
