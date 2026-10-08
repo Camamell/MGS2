@@ -7,8 +7,10 @@
 //! demo player (`FUN_00216308`, table at 0x1f3198 in a cutscene stage's
 //! resident image) on `type & 0x7fffffff`:
 //!
-//! - 2: actor messages; sub-kind (+0x10) 1 removes the model loaded by
-//!   record serial +0x14 (`FUN_002164e8`).
+//! - 2: actor messages (`FUN_00219020`). Sub-kind (+0x10) 0 sends message
+//!   `1, value (+0x18)` to the model loaded by serial +0x14: models start
+//!   hidden (flag 0x3000) and value 0 shows them, anything else hides them
+//!   (`FUN_00217ce0`); sub-kind 1 removes the model (`FUN_002164e8`).
 //! - 3: camera (`FUN_002190e0` / `FUN_00219ac8`): +0x14 f32 zoom, +0x18 f32
 //!   roll (radians), +0x20 eye xyz, +0x30 target xyz (mm).
 //! - 4: model load (`FUN_002163f8`): the model object is keyed by this
@@ -42,7 +44,7 @@ pub struct Camera {
     pub roll: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Model {
     pub serial: u32,
     pub name: u32,
@@ -51,6 +53,16 @@ pub struct Model {
     /// Frames it is loaded from and (if removed) until.
     pub from: u32,
     pub until: Option<u32>,
+    /// Shown / hidden from these frames on (hidden until the first).
+    pub shown: Vec<(u32, bool)>,
+}
+
+impl Model {
+    pub fn visible(&self, frame: f32) -> bool {
+        (self.from as f32) <= frame
+            && self.until.is_none_or(|u| frame < u as f32)
+            && self.shown.iter().rev().find(|(f, _)| (*f as f32) <= frame).is_some_and(|(_, s)| *s)
+    }
 }
 
 /// An actor's state after a packet that changed it.
@@ -148,11 +160,11 @@ fn packet(chunk: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, A
         let r = &chunk[p..p + sz];
         match t & 0x7FFF_FFFF {
             2 => {
-                if u32_at(r, 0x10) == Some(1)
-                    && let Some(serial) = u32_at(r, 0x14)
-                    && let Some(m) = demo.models.iter_mut().rev().find(|m| m.serial == serial && m.until.is_none())
-                {
-                    m.until = Some(frame);
+                let target = u32_at(r, 0x14).and_then(|s| demo.models.iter_mut().rev().find(|m| m.serial == s && m.until.is_none()));
+                match (u32_at(r, 0x10), target) {
+                    (Some(0), Some(m)) => m.shown.push((frame, u32_at(r, 0x18) == Some(0))),
+                    (Some(1), Some(m)) => m.until = Some(frame),
+                    _ => {}
                 }
             }
             3 => {
@@ -167,7 +179,7 @@ fn packet(chunk: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, A
             }
             4 => {
                 if let (Some(serial), Some(name), Some(file)) = (u32_at(r, 8), u32_at(r, 0x18), u32_at(r, 0x1C)) {
-                    demo.models.push(Model { serial, name, file, from: frame, until: None });
+                    demo.models.push(Model { serial, name, file, from: frame, until: None, shown: Vec::new() });
                 }
             }
             7 => actors(r, frame, demo, state),

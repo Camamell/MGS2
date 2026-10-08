@@ -84,9 +84,8 @@ pub fn read(iso: &Path, id: u32) -> anyhow::Result<Vec<u8>> {
 pub struct Cutscene {
     /// Subtitles over the whole cutscene.
     pub lines: Vec<Line>,
-    /// Its demos, the frame each starts at, and its parking spot.
+    /// Its demos and the frame each starts at.
     pub demos: Vec<(u32, Demo)>,
-    parks: Vec<Option<Vec3>>,
     /// The cutscene stage's data (models and textures).
     pub stage: Option<StageData>,
     /// The scenery the cutscene stage's script places (its deck pieces,
@@ -136,25 +135,7 @@ pub fn load(iso: &Path, name: &str, script: &Gcx, stage: Option<StageData>) -> C
         demos.iter().map(|d| d.1.cameras.len()).sum::<usize>(),
         offset
     );
-    let parks = demos.iter().map(|(_, d)| park(d)).collect();
-    Cutscene { lines, demos, parks, stage, scenery: Vec::new(), backdrop: None, frame: 0.0, length: offset as f32, name: name.to_string(), spawned: false }
-}
-
-/// Where a demo parks the actors it is not showing: the position most of
-/// them share at the start (three or more). How the player hides actors
-/// and attaches them to others is not decoded yet; parked actors and those
-/// near the origin (placed relative to a parent) are hidden.
-fn park(d: &Demo) -> Option<Vec3> {
-    let mut counts: Vec<([i32; 3], usize)> = Vec::new();
-    for keys in d.actors.values() {
-        let Some(k) = keys.first() else { continue };
-        let p = k.pos.map(|v| v.round() as i32);
-        match counts.iter_mut().find(|(q, _)| *q == p) {
-            Some((_, n)) => *n += 1,
-            None => counts.push((p, 1)),
-        }
-    }
-    counts.into_iter().filter(|(_, n)| *n >= 3).max_by_key(|(_, n)| *n).map(|(p, _)| Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32))
+    Cutscene { lines, demos, stage, scenery: Vec::new(), backdrop: None, frame: 0.0, length: offset as f32, name: name.to_string(), spawned: false }
 }
 
 #[derive(Component)]
@@ -378,8 +359,7 @@ pub fn animate(
 
     for (e, a, mut tf, mut vis) in &mut actors {
         let model_info = demo.models.iter().find(|m| m.serial == a.serial);
-        let alive = a.demo == di
-            && model_info.is_some_and(|m| (m.from as f32) <= f && m.until.is_none_or(|u| f < u as f32));
+        let alive = a.demo == di && model_info.is_some_and(|m| m.visible(f));
         let keys = if alive { demo.actors.get(&a.serial) } else { None };
         let Some(keys) = keys.filter(|k| !k.is_empty()) else {
             if *vis != Visibility::Hidden {
@@ -390,14 +370,7 @@ pub fn animate(
         let i = keys.partition_point(|k| (k.frame as f32) <= f).max(1);
         let ka = &keys[i - 1];
         let kb = keys.get(i).unwrap_or(ka);
-        let p = Vec3::from(ka.pos);
-        let parked = c.parks[di].is_some_and(|q| q.distance(p) < 2.0) || p.length() < 1500.0;
-        if parked {
-            if *vis != Visibility::Hidden {
-                *vis = Visibility::Hidden;
-            }
-            continue;
-        }
+
         let t = if kb.frame > ka.frame { ((f - ka.frame as f32) / (kb.frame - ka.frame) as f32).clamp(0.0, 1.0) } else { 0.0 };
         if *vis != Visibility::Inherited {
             *vis = Visibility::Inherited;

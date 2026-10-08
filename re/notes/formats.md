@@ -235,8 +235,10 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   stage's resident image (analysed for d05t in `re/ghidra-d05t`).
   `FUN_00216308` dispatches packet sub-records `u32 type, u32 size, u32
   serial, ...` on `type & 0x7fffffff` through the table at 0x1f3198:
-  - 2 (`FUN_00219020`): messages; sub-kind 1 removes the model loaded by
-    serial +0x14.
+  - 2 (`FUN_00219020`): messages. Sub-kind 0 sends `1, value (+0x18)` to
+    the model loaded by serial +0x14 (`FUN_00217ce0`): models start
+    hidden (flag 0x3000), value 0 shows, anything else hides. Sub-kind 1
+    removes the model; 3 creates an effect.
   - 3 (`FUN_002190e0` -> camera actor `FUN_00219ac8`): +0x14 zoom, +0x18
     roll (radians), +0x20 eye, +0x30 target (f32 mm).
   - 4 (`FUN_002163f8` -> `FUN_00217a80`): a model object keyed by the
@@ -256,9 +258,7 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
 - Scenery is not in the demo: the cutscene stage's script places it with
   the usual prop actor `0x7a8ec1` (the deck pieces), a sky (`0x6273b5`) and
   sea pieces (`0xa895c4`).
-- Open: the `.evm` meshes, type-6 actors (effects, lights), how actors are
-  hidden or attached (the port hides the shared parking spot and positions
-  near the origin), audio.
+- Open: the `.evm` meshes, type-6 actors and effects, audio.
 ## mar (motions): joint rotations and root height done
 
 Full layout in `mgs2-formats/src/mar.rs`. Player code is in the resident
