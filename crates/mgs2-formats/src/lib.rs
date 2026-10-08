@@ -5,6 +5,7 @@
 
 pub mod cipher;
 pub mod demo;
+pub mod evm;
 pub mod gcx;
 pub mod gs;
 pub mod hzx;

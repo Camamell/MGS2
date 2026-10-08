@@ -258,7 +258,17 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
 - Scenery is not in the demo: the cutscene stage's script places it with
   the usual prop actor `0x7a8ec1` (the deck pieces), a sky (`0x6273b5`) and
   sea pieces (`0xa895c4`).
-- Open: the `.evm` meshes, type-6 actors and effects, audio.
+- `.evm` (file type 4, `mgs2_formats::evm`, loader `FUN_00129bd8`): the
+  cutscene characters' skinned meshes. Header: animated bone count, bone
+  records, bbox, texture set (+0x24), mesh count / offset (+0x28/+0x2c).
+  Bones (0x40): parent, offset from parent, bind position. Meshes (0x40):
+  flags, 3 textures, vertex count, up to 8 bone indices (+0x18), data
+  offsets (+0x20): positions `i16 x y z w` in 1/16 mm in model space (w bit
+  15 = strip restart), normals `i16` / 4096, UVs `i16 u v 4096 0` / 4096,
+  skin 8 bytes a vertex (4 weights u8 / 128, 4 slots u8 = 4 x index into
+  the mesh's bones). The demo's joints rotate the evm bones (the first
+  `animated` ones); a vertex moves from its bones' bind positions.
+- Open: type-6 actors and effects, audio.
 ## mar (motions): joint rotations and root height done
 
 Full layout in `mgs2-formats/src/mar.rs`. Player code is in the resident

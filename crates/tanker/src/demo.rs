@@ -176,6 +176,53 @@ pub struct DemoActor {
     demo: usize,
     serial: u32,
     model: usize,
+    /// The `.evm` mesh drawn instead of the kms, if the model has one.
+    evm: Option<usize>,
+}
+
+/// One mesh of an `.evm`, skinned every frame.
+#[derive(Component)]
+pub struct EvmPart(usize);
+
+/// Bevy meshes of an evm in bind pose (metres).
+fn evm_meshes(m: &mgs2_formats::evm::Model) -> Vec<(u32, Mesh, usize)> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    m.meshes
+        .iter()
+        .enumerate()
+        .filter(|(_, x)| !x.indices.is_empty())
+        .map(|(i, x)| {
+            let n = x.positions.len();
+            let pos: Vec<[f32; 3]> = x.positions.iter().map(|p| (Vec3::from(*p) * SCALE).into()).collect();
+            let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+            let normals = if x.normals.len() == n { x.normals.clone() } else { vec![[0.0, 1.0, 0.0]; n] };
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+            let uvs = if x.uvs.len() == n { x.uvs.clone() } else { vec![[0.0, 0.0]; n] };
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+            mesh.insert_indices(Indices::U32(x.indices.clone()));
+            (x.textures[0], mesh, i)
+        })
+        .collect()
+}
+
+/// Posed bone matrices (mm) of an evm: each bone turns by its joint's
+/// rotation about its bind offset from the parent; `root` places bone 0.
+fn evm_pose(m: &mgs2_formats::evm::Model, rotations: &[Quat], root: Option<Vec3>) -> Vec<bevy::math::Affine3A> {
+    use bevy::math::Affine3A;
+    let mut out: Vec<Affine3A> = Vec::with_capacity(m.bones.len());
+    for (i, b) in m.bones.iter().enumerate() {
+        let rot = rotations.get(i).copied().unwrap_or(Quat::IDENTITY);
+        let mut offset = Vec3::from(b.offset);
+        if b.parent < 0 {
+            offset = root.unwrap_or(offset);
+        }
+        let local = Affine3A::from_rotation_translation(rot, offset);
+        let parent = usize::try_from(b.parent).ok().and_then(|p| out.get(p).copied()).unwrap_or(Affine3A::IDENTITY);
+        out.push(parent * local);
+    }
+    out
 }
 
 /// Advances the cutscene; Space skips to the next line, Esc ends it.
@@ -298,18 +345,26 @@ pub fn stage(
                 debug!("demo model {:#x} not found", m.file);
                 continue;
             };
-            let e = scene::spawn_model(
-                &mut commands,
-                &data.models[model].1,
-                data,
-                &mut cache,
-                &mut meshes,
-                &mut images,
-                &mut materials,
-                true,
-                DemoActor { demo: di, serial: m.serial, model },
-            );
-            commands.entity(e).insert(Visibility::Hidden);
+            let evm = (m.evm != 0)
+                .then(|| data.evms.iter().position(|(h, _)| *h & 0x00FF_FFFF == m.evm & 0x00FF_FFFF))
+                .flatten();
+            let actor = DemoActor { demo: di, serial: m.serial, model, evm };
+            let _entity = match evm {
+                Some(ei) => {
+                    let parent = commands.spawn((actor, Transform::default(), Visibility::Hidden)).id();
+                    for (tex, mesh, i) in evm_meshes(&data.evms[ei].1) {
+                        let mat = cache.get(tex, data, &mut images, &mut materials, true);
+                        let child = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), EvmPart(i))).id();
+                        commands.entity(parent).add_child(child);
+                    }
+                    parent
+                }
+                None => {
+                    let e = scene::spawn_model(&mut commands, &data.models[model].1, data, &mut cache, &mut meshes, &mut images, &mut materials, true, actor);
+                    commands.entity(e).insert(Visibility::Hidden);
+                    e
+                }
+            };
             if let Some(k) = d.actors.get(&m.serial).and_then(|k| k.first()) {
                 let km = &data.models[model].1;
                 debug!(
@@ -345,6 +400,7 @@ pub fn animate(
     mut actors: Query<(Entity, &DemoActor, &mut Transform, &mut Visibility), Without<Part>>,
     children: Query<&Children>,
     mut parts: Query<(&Part, &Mesh3d, &mut Visibility), Without<DemoActor>>,
+    evm_parts: Query<(&EvmPart, &Mesh3d)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut cam: Query<(&mut Transform, &mut Projection), (With<crate::player::FollowCam>, Without<DemoActor>)>,
 ) {
@@ -400,6 +456,44 @@ pub fn animate(
         tf.translation = lerp3(ka.pos, kb.pos, t) * SCALE;
         tf.rotation = ra.slerp(rb, t);
 
+        if let Some(ei) = a.evm {
+            let em = &data.evms[ei].1;
+            let rots: Vec<Quat> = ka
+                .joints
+                .iter()
+                .zip(kb.joints.iter().chain(std::iter::repeat(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])))
+                .take(em.animated.min(em.bones.len()))
+                .map(|(x, y)| Quat::from_xyzw(x[0], x[1], x[2], x[3]).normalize().slerp(Quat::from_xyzw(y[0], y[1], y[2], y[3]).normalize(), t))
+                .collect();
+            let root = ka.joints.first().map(|j| Vec3::new(j[4], j[5], j[6])).filter(|v| *v != Vec3::ZERO);
+            let mats = evm_pose(em, &rots, root);
+            for child in children.iter_descendants(e) {
+                let Ok((part, mesh3d)) = evm_parts.get(child) else { continue };
+                let Some(src) = em.meshes.get(part.0) else { continue };
+                let Some(mut mesh) = meshes.get_mut(&mesh3d.0) else { continue };
+                let mut pos: Vec<[f32; 3]> = Vec::with_capacity(src.positions.len());
+                let mut nrm: Vec<[f32; 3]> = Vec::with_capacity(src.positions.len());
+                for (i, p) in src.positions.iter().enumerate() {
+                    let v = Vec3::from(*p);
+                    let n = src.normals.get(i).map_or(Vec3::Y, |n| Vec3::from(*n));
+                    let (mut acc, mut accn) = (Vec3::ZERO, Vec3::ZERO);
+                    for &(bone, w) in &src.skin[i] {
+                        if w <= 0.0 {
+                            continue;
+                        }
+                        let Some(m) = mats.get(usize::from(bone)) else { continue };
+                        let bind = Vec3::from(em.bones[usize::from(bone)].position);
+                        acc += m.transform_point3(v - bind) * w;
+                        accn += m.transform_vector3(n) * w;
+                    }
+                    pos.push((acc * SCALE).into());
+                    nrm.push(accn.normalize_or(Vec3::Y).into());
+                }
+                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
+            }
+            continue;
+        }
         let model = &data.models[a.model].1;
         // With an evm, only the standard body's joints match kms objects.
         let matched = if model_info.is_some_and(|m| m.evm != 0) { BODY_JOINTS } else { usize::MAX };

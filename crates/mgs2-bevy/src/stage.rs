@@ -60,6 +60,8 @@ pub struct StageData {
     pub collision: Option<hzx::Hzx>,
     /// (file name hash, motion archive).
     pub motions: Vec<(u32, mar::Mar)>,
+    /// (file name hash, skinned cutscene mesh).
+    pub evms: Vec<(u32, mgs2_formats::evm::Model)>,
     /// The stage script (`scenerio.gcx`).
     pub script: Option<gcx::Gcx>,
     /// The stage's resident code image (type-1 file, loaded at 0x1F1480):
@@ -105,13 +107,14 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
         models: Vec::new(),
         collision: None,
         motions: Vec::new(),
+        evms: Vec::new(),
         script: None,
         resident: None,
         warnings: Vec::new(),
     };
     let level = str_code(name.as_bytes());
     // Stage files first so they win over resident ones with the same hash.
-    let resident_files = resident.files().filter(|(_, f)| matches!(f.type_id(), 10 | 12 | 19));
+    let resident_files = resident.files().filter(|(_, f)| matches!(f.type_id(), 4 | 10 | 12 | 19));
     for (page, f) in stage.files().chain(resident_files) {
         let bytes = page.file_data(f);
         let what = format!("{:06x}.{}", f.name_hash(), f.extension());
@@ -136,6 +139,10 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
             },
             12 if bytes.starts_with(b"MARa") && data.motions.iter().all(|(h, _)| *h != f.name_hash()) => match mar::parse(bytes) {
                 Ok(m) => data.motions.push((f.name_hash(), m)),
+                Err(e) => data.warnings.push(format!("{what}: {e}")),
+            },
+            4 if data.evms.iter().all(|(h, _)| *h != f.name_hash()) => match mgs2_formats::evm::parse(bytes) {
+                Ok(m) => data.evms.push((f.name_hash(), m)),
                 Err(e) => data.warnings.push(format!("{what}: {e}")),
             },
             1 if data.resident.is_none() => data.resident = Some(bytes.to_vec()),
