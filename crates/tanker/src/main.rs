@@ -5,6 +5,7 @@
 //! turn the camera, F1 collision overlay, F2 guard vision cones.
 
 mod body;
+mod bullet;
 mod collision;
 mod gcl;
 mod guard;
@@ -62,6 +63,9 @@ struct Cli {
     /// Start the auto-walk this many seconds in.
     #[arg(long, default_value_t = 0.0)]
     walk_from: f32,
+    /// Put Snake here instead (mm, `--snake-at=x,y,z`; for testing).
+    #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
+    snake_at: Option<Vec<f32>>,
     /// Start with guard vision cones shown.
     #[arg(long)]
     vision: bool,
@@ -100,6 +104,10 @@ struct Cast {
 #[derive(Resource)]
 struct Start {
     cast: std::sync::Mutex<Option<Cast>>,
+    difficulty: i16,
+    /// Snake's start, for continuing after a game over.
+    snake_start: Option<(Vec3, f32)>,
+    caution_time: i32,
     cam_yaw: f32,
     cam_dist: f32,
     cam_pitch: f32,
@@ -142,6 +150,9 @@ fn main() -> Result<()> {
     let progress = arrival.and_then(|a| a.progress);
     let entry = arrival.map(|a| a.entry).or_else(|| data.entries.get(cli.entry).copied());
     let (mut pos, direction) = entry.map_or((Vec3::ZERO, 0), |e| (Vec3::from(e.position), e.direction));
+    if let Some(at) = cli.snake_at.as_ref().filter(|a| a.len() == 3) {
+        pos = Vec3::new(at[0], at[1], at[2]);
+    }
     if let Some(col) = &collision {
         if let Some(y) = col.floor_below(pos.x, pos.z, pos.y + 2000.0) {
             pos.y = y;
@@ -187,22 +198,29 @@ fn main() -> Result<()> {
     }))
     .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.05)))
     .insert_resource(Game { data, collision, nav, show_collision: false, show_vision: cli.vision })
-    .insert_resource(phase)
+    .insert_resource(bullet::Rng(0x2001_1113))
     .insert_resource(Start {
+        difficulty: cli.difficulty,
+        snake_start: snake.map(|s| (s.2, s.3)),
+        caution_time: phase.caution_time,
         cast: std::sync::Mutex::new(Some(Cast { snake, guards })),
         cam_yaw: cli.cam_yaw.to_radians(), cam_dist: cli.cam_dist, cam_pitch: cli.cam_pitch.to_radians(), follow_guard: cli.follow_guard,
     })
+    .insert_resource(phase)
     .add_systems(Startup, setup)
     .add_systems(
         Update,
         (
             player::control,
             guard::think,
+            bullet::fly,
+            game_over,
             body::skin,
             player::follow_camera,
             toggles,
             draw_collision,
             guard::draw,
+            bullet::draw,
             hud,
         )
             .chain(),
@@ -250,7 +268,7 @@ fn setup(
     match cast.snake {
         Some((model, motions, pos, yaw)) => {
             let e = spawn(&mut commands, model, Body { pos, yaw, model, motions, motion: 0, frame: 0.0 });
-            commands.entity(e).insert(Player::default());
+            commands.entity(e).insert(Player::new(start.difficulty));
         }
         None => error!("Snake's model (sna_def) not found"),
     }
@@ -310,6 +328,37 @@ fn draw_collision(game: Res<Game>, mut gizmos: Gizmos) {
     }
 }
 
+/// After a game over, Enter continues from the stage start with full life
+/// and the guards back on patrol.
+#[allow(clippy::type_complexity)]
+fn game_over(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    start: Res<Start>,
+    mut phase: ResMut<Phase>,
+    mut player: Query<(&mut Player, &mut Body), Without<Guard>>,
+    mut guards: Query<&mut Guard>,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    let Ok((mut p, mut body)) = player.single_mut() else { return };
+    if !p.dead() || !keys.just_pressed(KeyCode::Enter) {
+        return;
+    }
+    *p = Player::new(start.difficulty);
+    if let Some((pos, yaw)) = start.snake_start {
+        body.pos = pos;
+        body.yaw = yaw;
+    }
+    *phase = Phase::default();
+    phase.caution_time = start.caution_time;
+    for mut g in &mut guards {
+        g.reset();
+    }
+    for e in &bullets {
+        commands.entity(e).despawn();
+    }
+}
+
 fn hud(
     game: Res<Game>,
     phase: Res<Phase>,
@@ -324,12 +373,22 @@ fn hud(
         guard::PhaseKind::Caution => format!("CAUTION {:.1}", phase.caution as f32 / 60.0),
         guard::PhaseKind::Infiltration => "INFILTRATION".into(),
     };
+    let bar = |n: i32, max: i32| {
+        let full = (n.max(0) * 20 + max - 1) / max.max(1);
+        format!("[{}{}]", "#".repeat(full as usize), "-".repeat(20 - full as usize))
+    };
+    let life = if p.dead() {
+        "LIFE [--------------------]  GAME OVER - press Enter to continue".to_string()
+    } else {
+        format!("LIFE {} {}/{}{}", bar(p.life, p.max_life), p.life, p.max_life, if p.hurt > 0.0 { "  HIT!" } else { "" })
+    };
     **t = format!(
-        "{}  {}  guards {}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
+        "{}  {}  guards {}\n{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
          WASD move  Shift walk  C crouch  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
         game.data.name,
         status,
         guards.iter().count(),
+        life,
         b.pos.x,
         b.pos.y,
         b.pos.z,

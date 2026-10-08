@@ -17,9 +17,13 @@
 //!   expires 60 frames after the last sighting;
 //! - phases (`Phase`) from the enemy manager `FUN_00220818`/`FUN_00220430`.
 //!
+//! - shooting (`FUN_00228710`/`FUN_00228F80`): aim 21 frames, a shot every
+//!   4 frames with a 1-in-3 chance to end the burst, reload after 31 shots;
+//!   bullets in `bullet.rs`.
+//!
 //! Simplified for now: one "!" duration for every guard (the action
-//! animation length is not read yet), close-quarters sub-states, shooting,
-//! radio reports, noise/body/footprint stimuli, and the evasion search
+//! animation length is not read yet), the fire range and reload time,
+//! close-quarters sub-states, radio reports, noise/body/footprint stimuli, and the evasion search
 //! pattern (guards visit nav nodes around the last known position).
 
 use std::f32::consts::TAU;
@@ -29,6 +33,7 @@ use mgs2_formats::hzx::Waypoint;
 
 use crate::Game;
 use crate::body::{Body, turn_toward};
+use crate::bullet::{self, Rng};
 use crate::gcl::Spawn;
 use crate::player::{HEIGHT, Player, RADIUS, STEP_UP};
 
@@ -151,7 +156,30 @@ pub struct Guard {
     pub last_seen: Option<Vec3>,
     path: Vec<Vec3>,
     repath: u32,
+    attack: Attack,
 }
+
+/// Shooting (`FUN_00228710`/`FUN_00228F80`): aim for 21 frames, then a
+/// burst with one shot every 4 frames and a 1-in-3 chance to stop after
+/// each; reload after 31 shots. Counters are in frames (60 per second).
+#[derive(Clone, Copy, Debug, Default)]
+struct Attack {
+    aim: f32,
+    cooldown: f32,
+    firing: bool,
+    shots: u32,
+    reload: f32,
+}
+
+const AIM_FRAMES: f32 = 21.0;
+const SHOT_FRAMES: f32 = 4.0;
+const MAGAZINE: u32 = 31;
+/// Reload pause (the reload motion's length; not read yet).
+const RELOAD_FRAMES: f32 = 90.0;
+/// Guards open fire inside this range when they can see Snake.
+const FIRE_RANGE: f32 = 9000.0;
+/// Muzzle height above the feet (approximate).
+const MUZZLE: f32 = 1350.0;
 
 /// Builds a guard from its script spawn.
 pub fn from_spawn(s: &Spawn, default_vision: f32) -> Option<(Guard, Vec3)> {
@@ -175,8 +203,23 @@ pub fn from_spawn(s: &Spawn, default_vision: f32) -> Option<(Guard, Vec3)> {
         last_seen: None,
         path: Vec::new(),
         repath: 0,
+        attack: Attack::default(),
     };
     Some((guard, pos))
+}
+
+impl Guard {
+    /// Back to the patrol with no memory of Snake (continuing after a game
+    /// over).
+    pub fn reset(&mut self) {
+        self.state = State::Patrol;
+        self.level = 0;
+        self.meter = 0;
+        self.tracking = None;
+        self.last_seen = None;
+        self.path.clear();
+        self.attack = Attack::default();
+    }
 }
 
 /// Signed difference of two 4096-unit angles (`FUN_001413B8`).
@@ -284,16 +327,20 @@ fn face(body: &mut Body, target: Vec3, dt: f32) {
     body.yaw = turn_toward(body.yaw, to.x.atan2(to.z), TURN_RATE * dt);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn think(
+    mut commands: Commands,
     time: Res<Time>,
     game: Res<Game>,
     mut phase: ResMut<Phase>,
-    snake: Query<&Body, (With<Player>, Without<Guard>)>,
+    mut rng: ResMut<Rng>,
+    snake: Query<(&Body, &Player), Without<Guard>>,
     mut guards: Query<(&mut Guard, &mut Body)>,
 ) {
     let dt = time.delta_secs().min(0.05);
-    let Ok(snake_body) = snake.single() else { return };
+    let Ok((snake_body, player)) = snake.single() else { return };
     let snake_pos = snake_body.pos;
+    let snake_dead = player.dead();
     let changed = std::mem::take(&mut phase.changed);
     let mut highest = 0i32;
 
@@ -328,8 +375,25 @@ pub fn think(
         }
 
         match phase.kind {
-            PhaseKind::Alert => alert_brain(&mut g, &mut body, snake_pos, dt, &game),
-            PhaseKind::Evasion => evasion_brain(&mut g, &mut body, &phase, dt, &game),
+            PhaseKind::Alert => {
+                if alert_brain(&mut g, &mut body, snake_pos, snake_dead, dt, &game, &mut rng) {
+                    let muzzle = body.pos + Vec3::Y * MUZZLE + body.forward() * 400.0;
+                    let at = snake_pos + Vec3::Y * (HEIGHT * 0.6);
+                    bullet::fire(&mut commands, &mut rng, muzzle, at);
+                }
+            }
+            PhaseKind::Evasion => {
+                // The evasion brain has the discovery state too (FUN_0022C670
+                // case 2 -> FUN_00238BF8): seeing Snake again starts it.
+                if g.level == 3 && !matches!(g.state, State::Discovery { .. }) {
+                    g.state = State::Discovery { timer: 0 };
+                }
+                if matches!(g.state, State::Discovery { .. }) {
+                    normal_brain(&mut g, &mut body, snake_pos, dt, &game);
+                } else {
+                    evasion_brain(&mut g, &mut body, &phase, dt, &game);
+                }
+            }
             _ => normal_brain(&mut g, &mut body, snake_pos, dt, &game),
         }
         highest = highest.max(i32::from(g.meter));
@@ -455,8 +519,18 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
     }
 }
 
-/// `FUN_00229D30` (chase part).
-fn alert_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Game) {
+/// `FUN_00229D30`: chase, and shoot when Snake is in sight. Returns true
+/// when a shot is fired this frame.
+#[allow(clippy::too_many_arguments)]
+fn alert_brain(
+    g: &mut Guard,
+    body: &mut Body,
+    snake: Vec3,
+    snake_dead: bool,
+    dt: f32,
+    game: &Game,
+    rng: &mut Rng,
+) -> bool {
     if g.level == 3 {
         g.meter = METER_MAX;
     }
@@ -468,6 +542,49 @@ fn alert_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Game
         }
     }
     let target = if g.level == 3 { snake } else { g.last_seen.unwrap_or(snake) };
+    let frames = dt * 60.0;
+
+    // In sight and in range: stand and shoot.
+    let a = &mut g.attack;
+    if a.reload > 0.0 {
+        a.reload -= frames;
+        body.play(motion::IDLE);
+        face(body, target, dt);
+        return false;
+    }
+    if g.level == 3 && body.pos.distance(snake) < FIRE_RANGE && !snake_dead {
+        g.path.clear();
+        body.play(motion::IDLE);
+        face(body, snake, dt);
+        if !a.firing {
+            a.aim += frames;
+            if a.aim >= AIM_FRAMES {
+                a.firing = true;
+                a.cooldown = 0.0;
+            }
+            return false;
+        }
+        a.cooldown -= frames;
+        if a.cooldown > 0.0 {
+            return false;
+        }
+        a.cooldown = SHOT_FRAMES;
+        a.shots += 1;
+        if a.shots >= MAGAZINE {
+            a.shots = 0;
+            a.reload = RELOAD_FRAMES;
+            a.firing = false;
+            a.aim = 0.0;
+        } else if rng.next() % 3 == 0 {
+            // Burst over: aim again.
+            a.firing = false;
+            a.aim = 0.0;
+        }
+        return true;
+    }
+    a.firing = false;
+    a.aim = 0.0;
+
     g.repath = g.repath.saturating_sub(1);
     if g.path.is_empty() || g.repath == 0 {
         plan(g, body.pos, target, game);
@@ -479,6 +596,7 @@ fn alert_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Game
     } else {
         body.play(motion::RUN);
     }
+    false
 }
 
 /// `FUN_0022C670` stand-in: walk to the last known position, then visit
@@ -556,20 +674,23 @@ pub fn trace(
     mut t: ResMut<Trace>,
     phase: Res<Phase>,
     guards: Query<(&Guard, &Body)>,
-    snake: Query<&Body, With<Player>>,
+    snake: Query<(&Body, &Player)>,
+    bullets: Query<&bullet::Bullet>,
 ) {
     t.0 += time.delta_secs();
     if t.0 < 1.0 {
         return;
     }
     t.0 = 0.0;
-    let s = snake.single().map(|b| b.pos).unwrap_or_default();
+    let (s, life) = snake.single().map(|(b, p)| (b.pos, p.life)).unwrap_or_default();
     eprint!(
-        "t={:5.1} snake=({:.0},{:.0},{:.0}) {:?} meter={} ev={} ca={} |",
+        "t={:5.1} snake=({:.0},{:.0},{:.0}) life={} bullets={} {:?} meter={} ev={} ca={} |",
         time.elapsed_secs(),
         s.x,
         s.y,
         s.z,
+        life,
+        bullets.iter().count(),
         phase.kind,
         phase.meter,
         phase.evasion,

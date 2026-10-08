@@ -35,6 +35,47 @@ pub struct Player {
     pub crouch: bool,
     /// Current horizontal speed (mm/s); guards hear running.
     pub speed: f32,
+    /// Life (script Bs16:0xf2, player+0x782) and its maximum (Bs16:0xf4).
+    pub life: i32,
+    pub max_life: i32,
+    pub rations: u32,
+    /// Seconds of hit flash left.
+    pub hurt: f32,
+    pub very_easy: bool,
+}
+
+/// Maximum life by difficulty, from `n_title`'s difficulty select
+/// (Very Easy 200, Easy 150, Normal 100, Hard 75, Extreme 50).
+pub fn max_life(difficulty: i16) -> i32 {
+    match difficulty {
+        ..=10 => 200,
+        11..=20 => 150,
+        21..=30 => 100,
+        31..=40 => 75,
+        _ => 50,
+    }
+}
+
+impl Player {
+    pub fn new(difficulty: i16) -> Self {
+        let max = max_life(difficulty);
+        Self { life: max, max_life: max, rations: 0, very_easy: difficulty <= 10, ..default() }
+    }
+
+    pub fn dead(&self) -> bool {
+        self.life <= 0
+    }
+
+    /// Damage with the ration revive of `FUN_00289320`: an equipped ration
+    /// restores full life on Very Easy, half otherwise.
+    pub fn damage(&mut self, amount: i32) {
+        self.life -= amount;
+        self.hurt = 0.25;
+        if self.life <= 0 && self.rations > 0 {
+            self.rations -= 1;
+            self.life = if self.very_easy { self.max_life } else { self.max_life / 2 };
+        }
+    }
 }
 
 #[derive(Component)]
@@ -64,6 +105,12 @@ pub fn control(
     let Ok((mut p, mut body)) = q.single_mut() else { return };
     let Ok(cam) = cam.single() else { return };
     let dt = time.delta_secs().min(0.05);
+    p.hurt = (p.hurt - dt).max(0.0);
+    if p.dead() {
+        p.speed = 0.0;
+        body.play(motion::IDLE);
+        return;
+    }
 
     let mut input = Vec2::ZERO;
     for (k, v) in [
