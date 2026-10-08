@@ -117,14 +117,16 @@ What works:
   script's targets, saved to the six-photo album, and sent from the
   terminal; Otacon's review is the original Codec record, and the stage
   script's own callbacks restart the stage on the success path and lead to
-  the chapter's last cutscene (d12t) and an end screen.
+  the chapter's last cutscene (d12t) and an end screen. The Marines stand
+  in formation where the script places them (`re/notes/formats.md`).
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range. In the holds, the
 camera is always available, a photo goes to the first empty album slot (else
 over the worst one), every line of the commandant's speech lasts 8 seconds
 (the voice data is not read), the speech running out does not end the game
-yet, and the marine crowd is not shown.
+yet, and the Marines all use the base model (their part swaps, caps and
+rifles from the w04c table are not applied).
 
 ## Viewer
 
@@ -178,4 +180,4 @@ Other options: `--collision`, `--lit`, `--browse <index>`,
      hanging, Olga, cutscene subtitles, the holds' photo finale: the Tanker
      can be played from the deck to its end
    - next: reinforcements and radio reports, Olga's sequence selector,
-     cutscene scenes, the marine crowd, voice timing
+     cutscene scenes, the Marines' variants and reactions, voice timing

@@ -184,6 +184,14 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   Abit:0x62.2. `#c78b20` then restarts the stage with marker #9d2cb1, whose
   path plays the speech's last line (`#7aa13a 0x2000a808 -p #603f27`) and
   loads d12t; otherwise it empties the album to try again.
+- `chara #b3e388 ... -a <11 values per Marine>` (`FUN_0022a5d8`): name,
+  x y z, rotation, variant (% 22), unused, idle variation (% 6), flags.
+  Variants < 18: `us_def_1` with parts swapped for `w04a_us_def` parts by
+  the table at 0x1f73e0 (0x54 bytes = 21 part indices, -1 keeps the part;
+  +18 / +36 for the two lower LODs `us_mid_5_s`/`us_low_5_s`); 19 the
+  commandant `sco_def`; 20-21 `us_def_pants`. Flags: 0x70 rifle `m4a_nm`,
+  0x1 `obj_cap`, 0x4 `obj_helmet_def_s`, 0x80 `sco_hat`, 0x100
+  `obj_headphone_def`, 0x2 `obj_glass`.
 - `#7aa13a <id> -p proc`: a spoken line (ids 0x2000xxxx, not Codec); the
   commandant's speech is a chain of these, each proc picking the next, and
   its end is the time limit.

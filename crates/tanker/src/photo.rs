@@ -343,9 +343,16 @@ pub fn control(
 /// First-person view while the camera is up (runs after the follow camera).
 pub fn view(
     mode: Res<PhotoMode>,
-    player: Query<&Body, With<Player>>,
+    mut player: Query<(&Body, &mut Visibility), With<Player>>,
     mut cam: Query<(&mut Transform, &mut Projection), With<crate::player::FollowCam>>,
 ) {
+    // Snake is not drawn while looking through the camera.
+    if let Ok((_, mut v)) = player.single_mut() {
+        let want = if mode.active { Visibility::Hidden } else { Visibility::Inherited };
+        if *v != want {
+            *v = want;
+        }
+    }
     let Ok((mut tf, mut proj)) = cam.single_mut() else { return };
     let Projection::Perspective(persp) = proj.as_mut() else { return };
     let mode = mode.into_inner();
@@ -358,7 +365,7 @@ pub fn view(
         }
         return;
     }
-    let Ok(b) = player.single() else { return };
+    let Ok((b, _)) = player.single() else { return };
     let eye = (b.pos + Vec3::Y * EYE) * SCALE;
     tf.translation = eye;
     tf.look_to(look_dir(mode.yaw, mode.pitch), Vec3::Y);

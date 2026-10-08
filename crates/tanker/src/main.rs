@@ -10,6 +10,7 @@ mod bullet;
 mod codec;
 mod collision;
 mod contact;
+mod crowd;
 mod demo;
 mod gcl;
 mod guard;
@@ -227,6 +228,8 @@ struct Cast {
     sliding: Vec<(Prop, SlidingDoor)>,
     /// Bosses: (model, motions, position, facing).
     bosses: Vec<(usize, Option<usize>, Vec3, f32, Option<u32>)>,
+    /// Marines in formation: (model, motions, position, facing, idle).
+    crowd: Vec<(usize, Option<usize>, Vec3, f32, i32)>,
 }
 
 /// A static model placed by the script: `chara 0x7a8ec1` (scenery such as
@@ -405,6 +408,7 @@ fn prepare(
     let mut items = Vec::new();
     let mut sliding = Vec::new();
     let mut bosses = Vec::new();
+    let mut crowd = Vec::new();
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
     let mut photos = (Vec::new(), None);
@@ -463,6 +467,14 @@ fn prepare(
                 }
                 Some((model, motions, p, yaw, on_down))
             })
+            .collect();
+        let ushold = motions_index(&data, "ushold");
+        crowd = vm
+            .spawns
+            .iter()
+            .filter(|s| s.kind == crowd::CROWD_ACTOR)
+            .flat_map(crowd::members)
+            .filter_map(|m| Some((model_index(&data, crowd::model_name(m.variant))?, ushold, m.pos, m.yaw, m.idle)))
             .collect();
         items = vm
             .spawns
@@ -535,7 +547,7 @@ fn prepare(
     } else {
         game.entrance_done();
     }
-    Ok(Level { game, phase, cast: Cast { snake, guards, props, items, sliding, bosses } })
+    Ok(Level { game, phase, cast: Cast { snake, guards, props, items, sliding, bosses, crowd } })
 }
 
 fn main() -> Result<()> {
@@ -817,6 +829,12 @@ fn spawn_level(
     for (model, motions, pos, yaw, on_down) in cast.bosses {
         let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
         commands.entity(e).insert(olga::Olga::new(on_down));
+    }
+    for (model, motions, pos, yaw, idle) in cast.crowd {
+        let mut b = Body::new(pos, yaw, model, motions);
+        b.frame = idle as f32 * 7.0;
+        let e = spawn(&mut commands, model, b);
+        commands.entity(e).insert(crowd::Marine);
     }
     for (owner, model, when_aiming, grip) in weapons {
         let m = &data.models[model].1;

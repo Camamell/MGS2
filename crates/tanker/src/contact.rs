@@ -25,6 +25,7 @@ pub fn separate(
     game: Res<Game>,
     mut snake: Query<&mut Body, (With<Player>, Without<Guard>)>,
     mut guards: Query<(&mut Body, &Guard), Without<Player>>,
+    marines: Query<&Body, (With<crate::crowd::Marine>, Without<Player>, Without<Guard>)>,
 ) {
     let mut bodies: Vec<(Vec3, bool)> = guards.iter().map(|(b, g)| (b.pos, !g.asleep())).collect();
     let snake_pos = snake.single().map(|b| b.pos).ok();
@@ -66,6 +67,14 @@ pub fn separate(
         if *d != Vec2::ZERO {
             b.pos = settle(b.pos, *d);
             body.0 = b.pos;
+        }
+    }
+    // The Marines in formation do not give way.
+    if let Some(s) = snake_pos {
+        for m in &marines {
+            if let Some(p) = apart(s, m.pos) {
+                snake_push += p * 2.0;
+            }
         }
     }
     if snake_push != Vec2::ZERO
