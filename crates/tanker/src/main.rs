@@ -533,6 +533,7 @@ fn main() -> Result<()> {
         )
             .chain(),
     );
+    app.add_systems(Update, body::hold.after(body::skin).before(player::follow_camera));
     if cli.trace {
         app.insert_resource(guard::Trace::default()).add_systems(Update, guard::trace);
     }
@@ -633,16 +634,25 @@ fn spawn_level(
             (bundle, LevelEntity),
         )
     };
+    // (owner, weapon model, shown only while aiming)
+    let mut weapons = Vec::new();
     match cast.snake {
         Some((model, motions, pos, yaw)) => {
             let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
             commands.entity(e).insert(Player::new(session.difficulty));
+            weapons.extend(model_index(data, "m92").map(|m| (e, m, true)));
         }
         None => error!("Snake's model (sna_def) not found"),
     }
     for (g, model, motions, pos) in cast.guards {
         let e = spawn(&mut commands, model, Body::new(pos, 0.0, model, motions));
         commands.entity(e).insert(g);
+        weapons.extend(model_index(data, "aks").map(|m| (e, m, false)));
+    }
+    for (owner, model, when_aiming) in weapons {
+        let m = &data.models[model].1;
+        let e = scene::spawn_model(&mut commands, m, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        commands.entity(e).insert(body::Held { owner, object: body::RIGHT_HAND, when_aiming, grip: body::barrel_forward() });
     }
 }
 

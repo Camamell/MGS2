@@ -61,6 +61,47 @@ pub fn turn_toward(yaw: f32, target: f32, max_step: f32) -> f32 {
     yaw + diff.clamp(-max_step, max_step)
 }
 
+/// A model carried in a character's hand (weapons), placed on that joint
+/// every frame. Assumes the model is built in the hand's space.
+#[derive(Component)]
+pub struct Held {
+    pub owner: Entity,
+    /// Joint (object index) it is attached to.
+    pub object: usize,
+    /// Only shown while the owner is aiming (Snake's M9).
+    pub when_aiming: bool,
+    /// Weapon orientation in the hand's space (found by eye, not from the
+    /// game: the models are built barrel along -y).
+    pub grip: Quat,
+}
+
+/// Turns a barrel along -y to point forward (+z) from the hand.
+pub fn barrel_forward() -> Quat {
+    Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+}
+
+/// Right hand joint of both Snake (`sna_def`) and the soldiers (`gbs_def`):
+/// the end of the arm chain on the -x side (models face +z).
+pub const RIGHT_HAND: usize = 6;
+
+pub fn hold(
+    game: Res<Game>,
+    bodies: Query<(&Body, Option<&crate::player::Player>), Without<Held>>,
+    mut held: Query<(&Held, &mut Transform, &mut Visibility)>,
+) {
+    for (h, mut t, mut vis) in &mut held {
+        let Ok((b, player)) = bodies.get(h.owner) else { continue };
+        let model = &game.data.models[b.model].1;
+        let motion = b.motions.and_then(|m| game.data.motions[m].1.motions.get(b.motion));
+        let Some(hand) = anim::pose(model, motion, b.frame, false).get(h.object).copied() else { continue };
+        let owner = Transform::from_translation(b.pos * SCALE).with_rotation(Quat::from_rotation_y(b.yaw));
+        let (_, rot, pos) = hand.to_scale_rotation_translation();
+        *t = owner * Transform::from_translation(pos * SCALE).with_rotation(rot * h.grip);
+        let shown = !h.when_aiming || player.is_some_and(|p| p.aiming);
+        *vis = if shown { Visibility::Inherited } else { Visibility::Hidden };
+    }
+}
+
 /// Places every body and CPU-skins its meshes.
 pub fn skin(
     time: Res<Time>,
