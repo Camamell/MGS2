@@ -21,6 +21,7 @@ mod photo;
 mod player;
 mod script_cam;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -402,7 +403,7 @@ fn prepare(
     print_spawns: bool,
     show_vision: bool,
 ) -> Result<Level> {
-    let data = stage::load(disc, name)?;
+    let mut data = stage::load(disc, name)?;
     let collision = data.collision.as_ref().map(Collision::new);
     let nav = data.collision.as_ref().map(nav::Nav::new);
 
@@ -495,12 +496,26 @@ fn prepare(
                 }
             }
         }
-        crowd = vm
-            .spawns
+        let members: Vec<crowd::Member> = vm.spawns.iter().filter(|s| s.kind == crowd::CROWD_ACTOR).flat_map(crowd::members).collect();
+        // Each Marine variant once, built from the part library.
+        let mut variants: HashMap<i32, usize> = HashMap::new();
+        if let (Some(base), Some(lib), Some(img)) = (model_index(&data, "us_def_1"), model_index(&data, "w04a_us_def"), data.resident.clone()) {
+            for v in members.iter().map(|m| m.variant).filter(|v| *v < crowd::PART_VARIANTS) {
+                if variants.contains_key(&v) {
+                    continue;
+                }
+                if let Some(model) = crowd::variant_model(&data.models[base].1, &data.models[lib].1, &img, v) {
+                    data.models.push((0xFF00_0000 | v as u32, model));
+                    variants.insert(v, data.models.len() - 1);
+                }
+            }
+        }
+        crowd = members
             .iter()
-            .filter(|s| s.kind == crowd::CROWD_ACTOR)
-            .flat_map(crowd::members)
-            .filter_map(|m| Some((model_index(&data, crowd::model_name(m.variant))?, ushold, m.pos, m.yaw, m.idle)))
+            .filter_map(|m| {
+                let model = variants.get(&m.variant).copied().or_else(|| model_index(&data, crowd::model_name(m.variant)))?;
+                Some((model, ushold, m.pos, m.yaw, m.idle))
+            })
             .collect();
         items = vm
             .spawns

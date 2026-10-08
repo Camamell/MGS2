@@ -10,10 +10,12 @@
 //! (`sco_def`), 20-21 `us_def_pants`. Members placed at the origin are
 //! moved by the actor later (the commandant's walk) and are left out here.
 //!
-//! Drawn standing with the first `ushold` motion; the part swaps,
-//! accessories and the crowd's reactions are not done yet.
+//! Drawn standing with the first `ushold` motion, with their variants'
+//! parts; the accessories (caps, helmets, rifles) and the crowd's
+//! reactions are not done yet.
 
 use bevy::prelude::*;
+use mgs2_formats::kms;
 
 use crate::gcl::{Spawn, Val};
 
@@ -62,6 +64,45 @@ pub fn walkers(s: &Spawn) -> Vec<usize> {
             (v(1) == 0 && v(2) == 0 && v(3) >= 0 && v(7).rem_euclid(22) != 19).then_some(v(3) as usize)
         })
         .collect()
+}
+
+/// Parts per entry of the variant table (`us_def_1` has 21 objects).
+const PARTS: usize = 21;
+/// Variants built from parts (the table has 18 per level of detail).
+pub const PART_VARIANTS: i32 = 18;
+
+/// Finds the variant table in a stage's resident image (it moves between
+/// stages): entry 0 keeps every part, entry 1 swaps the neck and head (11,
+/// 12) for library parts 0 and 1.
+fn variant_table(resident: &[u8]) -> Option<usize> {
+    let mut sig = Vec::with_capacity(PARTS * 8);
+    for i in 0..PARTS * 2 {
+        let v: i32 = match i {
+            32 => 0,
+            33 => 1,
+            _ => -1,
+        };
+        sig.extend_from_slice(&v.to_le_bytes());
+    }
+    resident.windows(sig.len()).step_by(4).position(|w| w == sig.as_slice()).map(|p| p * 4)
+}
+
+/// Variant `v` (< 18) of a Marine: `us_def_1` with the parts the table
+/// names taken from the part library `w04a_us_def` (`FUN_002bfb40`).
+pub fn variant_model(base: &kms::Model, library: &kms::Model, resident: &[u8], v: i32) -> Option<kms::Model> {
+    if !(0..PART_VARIANTS).contains(&v) {
+        return None;
+    }
+    let table = variant_table(resident)? + v as usize * PARTS * 4;
+    let mut m = base.clone();
+    for (part, obj) in m.objects.iter_mut().enumerate().take(PARTS) {
+        let o = table + part * 4;
+        let j = i32::from_le_bytes(resident.get(o..o + 4)?.try_into().ok()?);
+        if let Some(lib) = usize::try_from(j).ok().and_then(|j| library.objects.get(j)) {
+            obj.meshes = lib.meshes.clone();
+        }
+    }
+    Some(m)
 }
 
 /// Model for a variant: the base body for the marines, the commandant's

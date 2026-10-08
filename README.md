@@ -128,8 +128,7 @@ sleep and knock-out times, reload pause and fire range. In the holds, the
 camera is always available, a photo goes to the first empty album slot (else
 over the worst one), every line of the commandant's speech lasts 8 seconds
 (the voice data is not read), the speech running out does not end the game
-yet, and the Marines all use the base model (their part swaps, caps and
-rifles from the w04c table are not applied).
+yet, and the Marines' caps, helmets and slung rifles are not shown.
 
 ## Viewer
 
