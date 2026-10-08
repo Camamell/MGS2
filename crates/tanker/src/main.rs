@@ -1008,7 +1008,8 @@ fn hud(
     let life = if p.dead() {
         "LIFE [--------------------]  GAME OVER - press Enter to continue".to_string()
     } else {
-        format!("LIFE {} {}/{}{}", bar(p.life, p.max_life), p.life, p.max_life, if p.hurt > 0.0 { "  HIT!" } else { "" })
+        let grip = p.hang.map_or(String::new(), |h| format!("   GRIP {}", bar((h.grip * 100.0) as i32, 100)));
+        format!("LIFE {} {}/{}{}{grip}", bar(p.life, p.max_life), p.life, p.max_life, if p.hurt > 0.0 { "  HIT!" } else { "" })
     };
     let prompt = if door_in_reach(&game, b.pos).is_some() { "  [Space] open door" } else { "" };
     let mut carried: Vec<String> =
