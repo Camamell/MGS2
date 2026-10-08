@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/mgs2-formats", "crates/mgs2-extract", "crates/mgs2-bevy", "crates/mgs2-viewer", "crates/tanker"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+# Bevy is unusably slow unoptimised; optimise dependencies even in dev builds.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

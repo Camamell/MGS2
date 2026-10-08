@@ -1,0 +1,12 @@
+[package]
+name = "mgs2-extract"
+description = "Extract stage data from a Metal Gear Solid 2 (PS2) disc image"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+mgs2-formats = { path = "../mgs2-formats" }
+png = "0.17"

@@ -1,0 +1,10 @@
+[package]
+name = "mgs2-formats"
+description = "Readers for Metal Gear Solid 2 (PS2, SLUS-20144) data formats"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+flate2 = "1"
+thiserror = "2"

@@ -1,0 +1,12 @@
+# Build output
+/target
+
+# Copyrighted game data and analysis databases: never commit these.
+/re/disc/
+/re/ghidra/
+/extracted/
+*.iso
+/extracted-png/
+/extracted-obj/
+/extracted-gcl/
+/re/third_party/

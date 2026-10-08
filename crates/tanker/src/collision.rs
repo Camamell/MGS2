@@ -1,0 +1,146 @@
+//! Player-vs-level collision against a stage's `.hzx` data.
+//!
+//! This is a straightforward reimplementation, not yet a port of the game's
+//! own routines (`hzxd.c`): floors give the ground height under a point,
+//! walls push a vertical cylinder out horizontally. All units are mm.
+
+use bevy::math::{Vec2, Vec3};
+use mgs2_formats::hzx::Hzx;
+
+struct Floor {
+    /// XZ outline.
+    outline: Vec<Vec2>,
+    point: Vec3,
+    normal: Vec3,
+    min: Vec2,
+    max: Vec2,
+}
+
+struct Wall {
+    a: Vec2,
+    b: Vec2,
+    bottom: f32,
+    top: f32,
+}
+
+pub struct Collision {
+    floors: Vec<Floor>,
+    walls: Vec<Wall>,
+}
+
+impl Collision {
+    /// Uses the primary wall/floor set (the second set's purpose is unknown).
+    pub fn new(hzx: &Hzx) -> Self {
+        let mut floors = Vec::new();
+        let mut walls = Vec::new();
+        for g in hzx.areas.iter().flat_map(|a| &a.groups) {
+            for poly in g.floors.iter().flat_map(|f| &f.polygons) {
+                if poly.vertices.len() < 3 || poly.normal[1] < 0.3 {
+                    continue; // ceilings and steep faces
+                }
+                let v: Vec<Vec3> = poly.vertices.iter().map(|v| Vec3::from(*v)).collect();
+                let mut n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or_zero();
+                if n.y < 0.0 {
+                    n = -n;
+                }
+                if n.y < 0.3 {
+                    continue;
+                }
+                let outline: Vec<Vec2> = v.iter().map(|p| Vec2::new(p.x, p.z)).collect();
+                let (min, max) = outline.iter().fold((Vec2::MAX, Vec2::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+                floors.push(Floor { outline, point: v[0], normal: n, min, max });
+            }
+            for w in &g.walls {
+                for pair in w.points.windows(2) {
+                    let ((a, ha), (b, hb)) = (pair[0], pair[1]);
+                    walls.push(Wall {
+                        a: Vec2::new(a[0], a[2]),
+                        b: Vec2::new(b[0], b[2]),
+                        bottom: a[1].min(b[1]),
+                        top: (a[1] + ha).max(b[1] + hb),
+                    });
+                }
+            }
+        }
+        Self { floors, walls }
+    }
+
+    /// Highest floor at `(x, z)` that is no higher than `max_y`.
+    pub fn floor_below(&self, x: f32, z: f32, max_y: f32) -> Option<f32> {
+        let p = Vec2::new(x, z);
+        self.floors
+            .iter()
+            .filter(|f| p.cmpge(f.min).all() && p.cmple(f.max).all() && inside(&f.outline, p))
+            .map(|f| f.point.y - (f.normal.x * (x - f.point.x) + f.normal.z * (z - f.point.z)) / f.normal.y)
+            .filter(|y| *y <= max_y)
+            .max_by(f32::total_cmp)
+    }
+
+    /// Pushes a cylinder (feet at `pos.y`) out of walls that overlap its
+    /// height, ignoring the lowest `step` mm so kerbs can be climbed.
+    pub fn push_out(&self, pos: Vec3, radius: f32, height: f32, step: f32) -> Vec3 {
+        let mut p = Vec2::new(pos.x, pos.z);
+        let (lo, hi) = (pos.y + step, pos.y + height);
+        for _ in 0..4 {
+            let mut moved = false;
+            for w in self.walls.iter().filter(|w| w.top > lo && w.bottom < hi) {
+                let ab = w.b - w.a;
+                let len2 = ab.length_squared();
+                if len2 < 1.0 {
+                    continue;
+                }
+                let t = ((p - w.a).dot(ab) / len2).clamp(0.0, 1.0);
+                let closest = w.a + ab * t;
+                let d = p - closest;
+                let dist = d.length();
+                if dist < radius {
+                    let dir = if dist > 1e-3 { d / dist } else { Vec2::new(-ab.y, ab.x).normalize() };
+                    p = closest + dir * radius;
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+        Vec3::new(p.x, pos.y, p.y)
+    }
+}
+
+impl Collision {
+    /// Whether a wall blocks the straight line from `a` to `b` (eye to eye).
+    /// Walls are vertical, so the test is 2D with a height check at the
+    /// crossing point.
+    pub fn line_blocked(&self, a: Vec3, b: Vec3) -> bool {
+        let (p, r) = (Vec2::new(a.x, a.z), Vec2::new(b.x - a.x, b.z - a.z));
+        self.walls.iter().any(|w| {
+            let s = w.b - w.a;
+            let denom = r.perp_dot(s);
+            if denom.abs() < 1e-6 {
+                return false;
+            }
+            let q = w.a - p;
+            let t = q.perp_dot(s) / denom;
+            let u = q.perp_dot(r) / denom;
+            if !(0.0..=1.0).contains(&t) || !(0.0..=1.0).contains(&u) {
+                return false;
+            }
+            let y = a.y + (b.y - a.y) * t;
+            y > w.bottom && y < w.top
+        })
+    }
+}
+
+/// Even-odd point-in-polygon test.
+fn inside(poly: &[Vec2], p: Vec2) -> bool {
+    let mut c = false;
+    let mut j = poly.len() - 1;
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[j]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            c = !c;
+        }
+        j = i;
+    }
+    c
+}

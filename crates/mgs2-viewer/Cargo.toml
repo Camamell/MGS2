@@ -1,0 +1,13 @@
+[package]
+name = "mgs2-viewer"
+description = "Bevy viewer for Metal Gear Solid 2 Tanker stages, loaded from your own disc image"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bevy = "0.19.1"
+clap.workspace = true
+mgs2-bevy = { path = "../mgs2-bevy" }
+mgs2-formats = { path = "../mgs2-formats" }

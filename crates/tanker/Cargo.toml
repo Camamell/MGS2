@@ -1,0 +1,13 @@
+[package]
+name = "tanker"
+description = "Metal Gear Solid 2 Tanker chapter rebuilt in Bevy, using data from your own disc"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bevy = "0.19.1"
+clap.workspace = true
+mgs2-bevy = { path = "../mgs2-bevy" }
+mgs2-formats = { path = "../mgs2-formats" }

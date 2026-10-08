@@ -1,0 +1,249 @@
+//! `.hzx` stage collision (file type 7, letter `h`; `hzxd.c`).
+//!
+//! Loader: `FUN_00144510` -> `FUN_00144008` (pointer fix-up and conversion
+//! of elements to runtime records by `FUN_00143f60` / `FUN_00143f90`).
+//!
+//! ```text
+//! header
+//!   +00 u16 ?            +02 u16 area count
+//!   +04 u16 count A      +06 u16 count B
+//!   +08 u32 -> A[count A] (12-byte records)
+//!   +0C u32 -> ?          +10 u32 -> B[count B] (0x30-byte records)
+//!   +14 u32 -> ?          +18 u32 -> ?
+//!   +1C u32 -> areas (0x5C bytes each)
+//! area
+//!   +00..+30 flags/pointers to further data (not yet decoded; possibly AI
+//!            navigation)
+//!   +34 i32 grid origin xyz   +40 i32 cell size xyz
+//!   +4C u8 grid dims x, y, z  +50 u16 group count   +54 u32 -> groups
+//! group (0x34 bytes): one grid cell
+//!   +00 i32 centre x, z, y (note the order; `FUN_00143F90` adds +08 to
+//!       element y). Element coordinates are relative to this centre.
+//!   +14 u16 counts: walls, floors, walls2, floors2, ?
+//!   +1E u16 cell index
+//!   +20 u32 -> element lists (same order)
+//! element (0x20 bytes)
+//!   +00 i16 bbox min xyz +06 i16 vertex count  +08 i16 bbox max xyz
+//!   +0E i16 polygon size (floors: 3 or 4)
+//!   +10 u32 -> vertices: i16 x, y, z, w
+//!   +14 u32 flags
+//! ```
+//!
+//! Walls are point lists where `w` is the wall height above the point.
+//! Floors are lists of polygons (`polygon size` vertices each); on each
+//! polygon's first three vertices `w` holds the plane normal * 32000.
+//! The second element set is registered with ids offset by 0x400; what it is
+//! used for (camera, bullets, ...) is not yet known.
+
+use crate::{Result, format_err};
+
+#[derive(Clone, Debug)]
+pub struct Hzx {
+    pub areas: Vec<Area>,
+    /// Patrol routes (header table at +08), indexed by the guard's `-r`.
+    pub routes: Vec<Route>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Route {
+    pub points: Vec<Waypoint>,
+}
+
+/// One 40-byte route point:
+/// `f32 x, z, y, look_x; f32 look_z, look_y; i16 ?, flags, wait, dir, ?, action, ...`.
+#[derive(Clone, Copy, Debug)]
+pub struct Waypoint {
+    pub position: [f32; 3],
+    /// Point to look at while waiting (flag 4).
+    pub look_at: Option<[f32; 3]>,
+    pub flags: i16,
+    /// Frames to wait here (-1 = forever, 0 = walk on).
+    pub wait: i16,
+    /// Facing while waiting, 4096 = full turn.
+    pub direction: i16,
+    pub action: i16,
+}
+
+#[derive(Clone, Debug)]
+pub struct Area {
+    pub grid_origin: [i32; 3],
+    pub cell_size: [i32; 3],
+    pub groups: Vec<Group>,
+    /// Navigation nodes (area +04 count, +0C table).
+    pub nav: Vec<NavNode>,
+}
+
+/// One 0x40-byte navigation node: a walkable rectangle.
+/// `f32 x, z, y, half_x, half_z; u16 flags; u8 links[6] @+16; ...`.
+/// Node lookup: `FUN_001451B8`; containment `FUN_00144830` (inside the
+/// rectangle and -1000 <= dy < 2000, or -10 <= dy < 500 with flag 0x20).
+/// The area also holds precomputed shortest-path matrices (+18, +1C, +24..),
+/// which are not decoded; paths can be recomputed from the links.
+#[derive(Clone, Debug)]
+pub struct NavNode {
+    pub position: [f32; 3],
+    pub half: [f32; 2],
+    pub flags: u16,
+    pub links: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Group {
+    /// Cell centre, x y z (already reordered from the file's x z y).
+    pub origin: [i32; 3],
+    pub cell: u16,
+    pub walls: Vec<Wall>,
+    pub floors: Vec<Floor>,
+    pub walls2: Vec<Wall>,
+    pub floors2: Vec<Floor>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Wall {
+    pub flags: u32,
+    /// World-space points (x, y, z) and the wall's height at each.
+    pub points: Vec<([f32; 3], f32)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Floor {
+    pub flags: u32,
+    pub polygons: Vec<Polygon>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Polygon {
+    pub vertices: Vec<[f32; 3]>,
+    pub normal: [f32; 3],
+}
+
+struct R<'a>(&'a [u8]);
+
+impl R<'_> {
+    fn get<const N: usize>(&self, o: usize) -> Result<[u8; N]> {
+        self.0
+            .get(o..o + N)
+            .map(|b| b.try_into().unwrap())
+            .ok_or_else(|| crate::Error::Format(format!("hzx: read past end at {o:#x}")))
+    }
+    fn u16(&self, o: usize) -> Result<u16> {
+        self.get(o).map(u16::from_le_bytes)
+    }
+    fn i16(&self, o: usize) -> Result<i16> {
+        self.get(o).map(i16::from_le_bytes)
+    }
+    fn u32(&self, o: usize) -> Result<u32> {
+        self.get(o).map(u32::from_le_bytes)
+    }
+    fn i32(&self, o: usize) -> Result<i32> {
+        self.get(o).map(i32::from_le_bytes)
+    }
+}
+
+pub fn parse(data: &[u8]) -> Result<Hzx> {
+    let r = R(data);
+    let n_areas = r.u16(2)? as usize;
+    let areas_off = r.u32(0x1C)? as usize;
+    if areas_off + n_areas * 0x5C > data.len() {
+        return format_err("hzx: area table out of range");
+    }
+    let mut areas = Vec::with_capacity(n_areas);
+    for a in 0..n_areas {
+        let ao = areas_off + a * 0x5C;
+        let n_groups = r.u16(ao + 0x50)? as usize;
+        let groups_off = r.u32(ao + 0x54)? as usize;
+        let mut groups = Vec::with_capacity(n_groups);
+        for g in 0..n_groups {
+            groups.push(parse_group(&r, groups_off + g * 0x34)?);
+        }
+        let (n_nav, nav_off) = (r.u32(ao + 4)? as usize, r.u32(ao + 0xC)? as usize);
+        let mut nav = Vec::with_capacity(n_nav);
+        if nav_off != 0 {
+            for i in 0..n_nav {
+                let p = nav_off + i * 0x40;
+                let f = |o: usize| r.u32(p + o).map(f32::from_bits);
+                let links = (0..6)
+                    .map(|k| r.get::<1>(p + 0x16 + k).map(|b| b[0]))
+                    .collect::<Result<Vec<u8>>>()?
+                    .into_iter()
+                    .take_while(|b| *b != 0xFF)
+                    .collect();
+                nav.push(NavNode {
+                    position: [f(0)?, f(8)?, f(4)?],
+                    half: [f(0xC)?, f(0x10)?],
+                    flags: r.u16(p + 0x14)?,
+                    links,
+                });
+            }
+        }
+        areas.push(Area {
+            grid_origin: [r.i32(ao + 0x34)?, r.i32(ao + 0x38)?, r.i32(ao + 0x3C)?],
+            cell_size: [r.i32(ao + 0x40)?, r.i32(ao + 0x44)?, r.i32(ao + 0x48)?],
+            groups,
+            nav,
+        });
+    }
+    let mut routes = Vec::new();
+    let (n_routes, routes_off) = (r.u16(4)? as usize, r.u32(8)? as usize);
+    for i in 0..n_routes {
+        let (count, at) = (r.u32(routes_off + i * 12)? as usize, r.u32(routes_off + i * 12 + 4)? as usize);
+        let mut points = Vec::with_capacity(count);
+        for k in 0..count {
+            let p = at + k * 40;
+            let f = |o: usize| r.u32(p + o).map(f32::from_bits);
+            let h = |n: usize| r.i16(p + 16 + n * 2);
+            let flags = h(4)?;
+            points.push(Waypoint {
+                position: [f(0)?, f(8)?, f(4)?],
+                look_at: (flags & 4 != 0).then(|| -> Result<[f32; 3]> { Ok([f(12)?, f(20)?, f(16)?]) }).transpose()?,
+                flags,
+                wait: h(5)?,
+                direction: h(6)?,
+                action: h(8)?,
+            });
+        }
+        routes.push(Route { points });
+    }
+    Ok(Hzx { areas, routes })
+}
+
+fn parse_group(r: &R, go: usize) -> Result<Group> {
+    let origin = [r.i32(go)?, r.i32(go + 8)?, r.i32(go + 4)?];
+    let mut grp = Group { origin, cell: r.u16(go + 0x1E)?, ..Default::default() };
+    for kind in 0..4 {
+        let count = r.u16(go + 0x14 + kind * 2)? as usize;
+        let list = r.u32(go + 0x20 + kind * 4)? as usize;
+        for e in 0..count {
+            let eo = list + e * 0x20;
+            let n = r.i16(eo + 6)?.max(0) as usize;
+            let poly = r.i16(eo + 0xE)?.max(1) as usize;
+            let flags = r.u32(eo + 0x14)?;
+            let vo = r.u32(eo + 0x10)? as usize;
+            let mut verts = Vec::with_capacity(n);
+            for i in 0..n {
+                let p = vo + i * 8;
+                let v = [r.i16(p)?, r.i16(p + 2)?, r.i16(p + 4)?, r.i16(p + 6)?];
+                let world = [0, 1, 2].map(|k| (i32::from(v[k]) + origin[k]) as f32);
+                verts.push((world, v[3]));
+            }
+            match kind {
+                0 | 2 => {
+                    let wall = Wall { flags, points: verts.iter().map(|&(p, h)| (p, f32::from(h))).collect() };
+                    if kind == 0 { grp.walls.push(wall) } else { grp.walls2.push(wall) }
+                }
+                _ => {
+                    let polygons = verts
+                        .chunks(poly)
+                        .map(|c| Polygon {
+                            vertices: c.iter().map(|v| v.0).collect(),
+                            normal: std::array::from_fn(|k| c.get(k).map_or(0.0, |v| f32::from(v.1) / 32000.0)),
+                        })
+                        .collect();
+                    let floor = Floor { flags, polygons };
+                    if kind == 1 { grp.floors.push(floor) } else { grp.floors2.push(floor) }
+                }
+            }
+        }
+    }
+    Ok(grp)
+}
