@@ -19,6 +19,8 @@ pub const SCALE: f32 = 0.001;
 pub struct MaterialCache {
     pub by_texture: HashMap<u32, Handle<StandardMaterial>>,
     pub missing: Vec<u32>,
+    /// Face to cull (`None`: draw both sides).
+    pub cull: Option<bevy::render::render_resource::Face>,
 }
 
 pub fn alpha_mode(t: &Texture) -> AlphaMode {
@@ -72,8 +74,8 @@ impl MaterialCache {
                 base_color_texture: Some(images.add(image(t))),
                 alpha_mode: alpha_mode(t),
                 unlit,
-                cull_mode: None,
-                double_sided: true,
+                cull_mode: self.cull,
+                double_sided: self.cull.is_none(),
                 perceptual_roughness: 0.9,
                 ..default()
             },
@@ -84,8 +86,8 @@ impl MaterialCache {
                 StandardMaterial {
                     base_color: if hash == 0 { Color::srgb(0.6, 0.6, 0.6) } else { Color::srgb(1.0, 0.0, 1.0) },
                     unlit,
-                    cull_mode: None,
-                    double_sided: true,
+                    cull_mode: self.cull,
+                    double_sided: self.cull.is_none(),
                     ..default()
                 }
             }

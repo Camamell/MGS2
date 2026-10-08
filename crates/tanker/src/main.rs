@@ -14,6 +14,7 @@ mod guard;
 mod items;
 mod nav;
 mod player;
+mod script_cam;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -87,6 +88,11 @@ struct Cli {
     use_door: Option<usize>,
     #[arg(long, default_value_t = 3.0)]
     door_at: f32,
+    /// Face culling: front (default; the strips wind clockwise, and the
+    /// PS2 culls, which hides ceilings from the overhead cameras), back or
+    /// none.
+    #[arg(long, default_value = "front")]
+    cull: String,
     /// Start with guard vision cones shown.
     #[arg(long)]
     vision: bool,
@@ -123,6 +129,8 @@ pub struct Game {
     /// Distance (mm) Snake still walks in by himself after coming through a
     /// door (the script's entrance `mesg`); exits arm when it is over.
     pub entrance: f32,
+    /// The script camera switched on, if any.
+    pub cameras: script_cam::Cameras,
     /// Take the trap boxes Snake starts in as already entered (a start that
     /// is not an arrival, so nothing should fire for it).
     pub prime_traps: bool,
@@ -286,6 +294,7 @@ struct Session {
     show_vision: bool,
     use_door: Option<(usize, f32)>,
     trace_traps: bool,
+    cull: Option<bevy::render::render_resource::Face>,
 }
 
 #[derive(Resource)]
@@ -342,6 +351,7 @@ fn prepare(
     let mut props = Vec::new();
     let mut items = Vec::new();
     let mut sliding = Vec::new();
+    let mut cameras = script_cam::Cameras::default();
     let mut banks_after = banks.clone();
     // Snake's start: the player actor's `-p x y z -d dir`, which read the
     // start variables; else the start variables themselves.
@@ -406,6 +416,7 @@ fn prepare(
                 eprintln!("  {:06x} {:?} {:?}", s.kind, s.args, s.options);
             }
         }
+        cameras.apply(&vm.spawns);
         banks_after = vm.banks();
     }
 
@@ -428,6 +439,7 @@ fn prepare(
         snake_start: (pos, yaw),
         entrance: 0.0,
         prime_traps: false,
+        cameras,
     };
     if walk_in {
         game.entrance = ENTRANCE_WALK;
@@ -499,6 +511,11 @@ fn main() -> Result<()> {
         show_vision: cli.vision,
         use_door: cli.use_door.map(|d| (d, cli.door_at)),
         trace_traps: cli.trace,
+        cull: match cli.cull.as_str() {
+            "back" => Some(bevy::render::render_resource::Face::Back),
+            "front" => Some(bevy::render::render_resource::Face::Front),
+            _ => None,
+        },
     })
     .insert_resource(Start {
         cam_yaw: cli.cam_yaw.to_radians(),
@@ -563,6 +580,8 @@ fn setup(mut commands: Commands, start: Res<Start>) {
             pitch: start.cam_pitch,
             distance: start.cam_dist,
             current: start.cam_dist,
+            scripted: true,
+            look: Vec3::ZERO,
             guard: start.follow_guard,
         },
     ));
@@ -597,7 +616,7 @@ fn spawn_level(
         }
     commands.remove_resource::<NewCast>();
     let Some(cast) = cast else { return };
-    let mut cache = MaterialCache::default();
+    let mut cache = MaterialCache { cull: session.cull, ..default() };
     let unlit = true;
     let data = &game.data;
     scene::spawn_level(&mut commands, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
@@ -714,12 +733,19 @@ fn script_event(
     level: &LevelRoots,
     bullets: &Query<Entity, With<bullet::Bullet>>,
 ) {
-    let Some(script) = &game.data.script else { return };
-    let mut vm = gcl::Vm::with_banks(script, game.banks.clone());
+    if game.data.script.is_none() {
+        return;
+    }
+    // Move the banks into the VM and back (this runs every frame for
+    // traps that report "stay").
+    let banks = std::mem::replace(&mut game.banks, gcl::Banks { a: Vec::new(), b: Vec::new() });
+    let script = game.data.script.as_ref().unwrap();
+    let mut vm = gcl::Vm::with_banks(script, banks);
     vm.eager = true;
     run(&mut vm);
-    let banks = vm.banks();
-    let Some(next) = vm.load.clone() else {
+    let (load, spawns, banks) = vm.finish();
+    game.cameras.apply(&spawns);
+    let Some(next) = load else {
         game.banks = banks;
         return;
     };
@@ -929,11 +955,12 @@ fn hud(
     }
     let message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
     **t = format!(
-        "{}  {}  guards {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
-         WASD move  Shift walk  C crouch  Z prone  Space action  F aim/fire M9  V punch  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones",
+        "{}  {}  guards {}  camera: {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
+         WASD move  Shift walk  C crouch  Z prone  Space action  F aim/fire M9  V punch  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones  F3 script cameras",
         game.data.name,
         status,
         guards.iter().count(),
+        match &game.cameras.active { Some((n, _)) => format!("stage {n:06x}"), None => "follow".into() },
         life,
         prompt,
         if carried.is_empty() { "-".to_string() } else { carried.join(", ") },

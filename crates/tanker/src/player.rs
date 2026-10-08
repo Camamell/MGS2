@@ -115,6 +115,10 @@ pub struct FollowCam {
     pub distance: f32,
     /// Distance after pulling in for obstacles.
     pub current: f32,
+    /// Use the stage script's cameras where it sets them (F3 toggles).
+    pub scripted: bool,
+    /// Point looked at (metres), eased while a script camera is on.
+    pub look: Vec3,
     /// Follow the n-th guard instead of Snake (debugging).
     pub guard: Option<usize>,
 }
@@ -318,6 +322,20 @@ pub fn follow_camera(
     }
     let target = b.pos * SCALE + Vec3::Y * 0.9;
     let manual = buttons.pressed(MouseButton::Right) || keys.pressed(KeyCode::KeyQ) || keys.pressed(KeyCode::KeyE);
+    if keys.just_pressed(KeyCode::F3) {
+        c.scripted = !c.scripted;
+    }
+    // The stage's own camera for this area, eased into.
+    if let (true, None, Some((_, sc))) = (c.scripted, c.guard, &game.cameras.active) {
+        let (eye, look) = sc.place(b.pos + Vec3::Y * 900.0);
+        let k = 1.0 - (-6.0 * dt).exp();
+        tf.translation = tf.translation.lerp(eye * SCALE, k);
+        c.look = c.look.lerp(look * SCALE, k);
+        let look = c.look;
+        tf.look_at(look, Vec3::Y);
+        return;
+    }
+    c.look = target;
     let dir = |yaw: f32| Vec3::new(yaw.sin(), 0.0, yaw.cos()) * c.pitch.cos() + Vec3::Y * c.pitch.sin();
     let mut back = dir(c.yaw);
     let mut want = c.distance;

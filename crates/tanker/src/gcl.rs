@@ -157,6 +157,11 @@ impl<'a> Vm<'a> {
         Banks { a: self.bank_a.clone(), b: self.bank_b.clone() }
     }
 
+    /// The stage `load`ed, the actors created, and the variables.
+    pub fn finish(self) -> (Option<String>, Vec<Spawn>, Banks) {
+        (self.load, self.spawns, Banks { a: self.bank_a, b: self.bank_b })
+    }
+
     /// Runs a proc with integer arguments (an actor's callback).
     pub fn call_proc(&mut self, proc: u32, args: &[i32]) {
         self.call(proc, args);

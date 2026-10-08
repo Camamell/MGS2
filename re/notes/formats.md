@@ -32,6 +32,10 @@ the letter marks a handler that also runs on unload):
 
 ## kms (models): done for static geometry and bind pose
 
+- Triangle strips wind clockwise as seen from the front (in our right-handed,
+  y-up space): culling Bevy's "front" faces gives the game's look, where
+  room ceilings vanish under the overhead stage cameras.
+
 - Triangle strips; restart flag in normal.w bit 15.
 - Positions are `i16` millimetres, Y up; UVs are relative to the texture's
   rectangle (0..1, scale 4096).
