@@ -345,6 +345,11 @@ impl<'a> Vm<'a> {
     }
 
     fn call(&mut self, proc: u32, args: &[i32]) {
+        // GCL_TRACE=1: log every proc call (debugging script flow).
+        static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *TRACE.get_or_init(|| std::env::var_os("GCL_TRACE").is_some()) {
+            eprintln!("gcl: call #{proc:06x} {args:?}");
+        }
         if let Some(body) = self.procs.get(&proc).copied() {
             self.last = self.block(body, args).unwrap_or(0);
         }

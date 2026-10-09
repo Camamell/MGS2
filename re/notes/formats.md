@@ -372,4 +372,12 @@ sound-bank pages.
   residents `FUN_0028fe00` / `FUN_0028f890`): counts 60 a second while
   running (`mesg #9b65f0 #000001` runs, `#000000` pauses, `-s` bit 0 starts
   paused), shows mm:ss:cc, ticks with effect 0x585 each second (0xcf under
-  600 frames), runs `-p` at zero; `command #450c64` reads the frames left.
+  600 frames), runs `-p` at zero; `command #450c64` reads the frames left.- The holds' speech (open): w03b -> d10t -> w04a -> w04b -> d11t -> w04c.
+  On entering w04a, `#f90a3d` -> `#ede110` (Marines' speaking order) ->
+  `#a6f927` -> `#86e3c2`, whose second branch is the raw RPN
+  `[#450c64 < 600, (Bu32:0xb4 != "w04b") && (0 || !Abit:0xb63.5)]`; the
+  evaluator (`FUN_00154080`, checked in its disassembly: the result is the
+  top value, `v0 = *top`) makes that true in w04a, so the speech's closing
+  line (MOVIE 0xab08) plays. `Abit:0xb63.5` is only set by w04b's
+  `#94ea87`; some engine-side state behind this is still unknown.
+- `GCL_TRACE=1` makes the port log every proc call.
