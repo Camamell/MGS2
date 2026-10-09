@@ -513,11 +513,13 @@ struct Track {
     mix_cur: i32,
     mix_target: i32,
     mix_step: i32,
+    /// Pan from the game (0x9f8ec, 0..64) for pan mode 2.
+    ext_pan: u32,
 }
 
 impl Track {
     fn init(ptr: usize) -> Track {
-        Track { ptr, ngc: 1, pvod: 0x7F, vol: 0x7F, panf: 0x1400, pan: 0x14, tmpd: 1, tmp: 0xFF, sync_cnt: 1, dyn_seen: -1, mix_cur: 0xFFFF, mix_target: 0xFFFF, ..Default::default() }
+        Track { ptr, ngc: 1, pvod: 0x7F, vol: 0x7F, panf: 0x1400, pan: 0x14, tmpd: 1, tmp: 0xFF, sync_cnt: 1, dyn_seen: -1, mix_cur: 0xFFFF, mix_target: 0xFFFF, ext_pan: 0x20, ..Default::default() }
     }
 }
 
@@ -1052,6 +1054,13 @@ impl Sequencer {
                 let k = ((v * vol) >> 6) + 1;
                 ((k * PAN64[0x40 - pan]) >> 7, (k * PAN64[pan]) >> 7)
             }
+            // Pan mode 2 (`dd 2`): pan and level from the game (0xfb`ttppvv`,
+            // `bgmfader.c`).
+            None if t.panmode == 2 => {
+                let pan = t.ext_pan.min(0x40) as usize;
+                let mix = t.mix_cur.clamp(0, 0xFFFF) as u32;
+                (((v * PAN64[0x40 - pan]) / 0x7F * mix) >> 16, ((v * PAN64[pan]) / 0x7F * mix) >> 16)
+            }
             effect => {
                 let pan = ((t.panf >> 8).clamp(0, 0x28)) as usize;
                 let mix = if effect.is_some() { 0xFFFF } else { t.mix_cur.clamp(0, 0xFFFF) as u32 };
@@ -1334,6 +1343,8 @@ pub struct Control {
     song: AtomicU32,
     level: AtomicU32,
     effects: std::sync::Mutex<Vec<u32>>,
+    /// Per song track: 0, or 0x8000_0000 | pan << 8 | volume (0xfb commands).
+    tracks: [AtomicU32; 32],
 }
 
 impl Control {
@@ -1344,6 +1355,14 @@ impl Control {
 
     pub fn song(&self) -> u32 {
         self.song.load(Ordering::Relaxed)
+    }
+
+    /// Song track `t`'s pan (0..63) and volume (0..63), as the driver's
+    /// `0xfb` command.
+    pub fn track(&self, t: usize, pan: u8, vol: u8) {
+        if let Some(a) = self.tracks.get(t) {
+            a.store(0x8000_0000 | u32::from(pan & 0x3F) << 8 | u32::from(vol & 0x3F), Ordering::Relaxed);
+        }
     }
 
     /// Queues sound effect `cmd` (`pan << 18 | volume << 12 | id`).
@@ -1393,6 +1412,17 @@ impl Player {
         let effects = self.control.effects.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
         for cmd in effects {
             self.seq.play_effect(cmd);
+        }
+        for (t, a) in self.control.tracks.iter().enumerate() {
+            let v = a.load(Ordering::Relaxed);
+            if v & 0x8000_0000 != 0 {
+                let track = &mut self.seq.tracks[t];
+                let vol = (v & 0x3F) as i32;
+                track.ext_pan = (v >> 8) & 0x3F;
+                track.mix_cur = vol * 0x410 + (vol >> 2);
+                track.mix_target = track.mix_cur;
+                track.mix_step = 0;
+            }
         }
         self.seq.tick();
         self.seq.spu.mix(&self.pack.spu, TICK_SAMPLES, &mut self.buf);

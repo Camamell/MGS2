@@ -81,8 +81,15 @@ velocity / 256, minus the tone's decrement, through the 41-step pan curve at
 Its update (`FUN_00230330`) follows the alert phase (`+0x112`): sneaking ->
 song 5 + level 1; alert -> SE 0x2a, song 2 + level 2; evasion -> song 3 +
 level 3; caution -> song 4; with flag `DAT_0017f48c & 1` song 1 + level 4.
-`bgmfader.c` (`cmd_62b1fd`) boxes fade single tracks by area (`-t track
--a x y z w h d "~stage"...`); not ported.
+`bgmfader.c` (`cmd_62b1fd`, update `FUN_00246af8`) places a song track in up to
+8 boxes (`-t track -a cx cy cz hx hy hz "~stage" ...`, `-s` bit 1: volume only):
+while sneaking it takes the box point nearest the camera, turns its
+distance and direction into volume and pan (`FUN_00114bf8`), eases both by
+16 a frame and sends `0xfb000000 | track << 16 | pan << 8 | volume`. The
+driver stores pan in 0x9f8ec and the volume (x 0x410) as the track's level;
+tracks in pan mode 2 (`dd 2`) pan with it through the 65-step curve. In
+w00a, song 5 (sneaking) has tracks 4-13 in pan mode 2 and faders on 6-8;
+songs 1-3 are one piece whose `f8` commands raise different track sets.
 
 ## Sound effects
 
