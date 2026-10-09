@@ -15,6 +15,7 @@ mod demo;
 mod music;
 mod sea;
 mod sfx;
+mod timer;
 mod gcl;
 mod guard;
 mod items;
@@ -189,6 +190,8 @@ pub struct Game {
     pub arrivals: Vec<(gcl::Spawn, f32)>,
     /// Rain on the open deck, if the stage has it.
     pub rain: Option<rain::RainSpec>,
+    /// The holds' time limit, when the stage runs one.
+    pub timer: Option<timer::Timer>,
     /// The script ended the game (`load ... -g`).
     pub game_over: bool,
     /// The variables as the stage started (a continue goes back to them).
@@ -452,6 +455,8 @@ fn prepare(
     print_spawns: bool,
     show_vision: bool,
 ) -> Result<Level> {
+    let mut banks = banks;
+    banks.set_b32(gcl::STAGE_NAME, mgs2_formats::str_code(name.as_bytes()) as i32);
     let mut data = stage::load(disc, name)?;
     let collision = data.collision.as_ref().map(Collision::new);
     let nav = data.collision.as_ref().map(nav::Nav::new);
@@ -467,6 +472,7 @@ fn prepare(
     let mut crowd = Vec::new();
     let mut on_alert = None;
     let mut rain_spec = None;
+    let mut holds_timer = None;
     let mut crowd_procs = (Vec::new(), (2500.0, 7000.0));
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
@@ -509,6 +515,7 @@ fn prepare(
             }
         }
         rain_spec = vm.spawns.iter().find(|s| s.kind == rain::RAIN_ACTOR).and_then(rain::from_spawn);
+        holds_timer = vm.spawns.iter().find(|s| s.kind == timer::TIMER_ACTOR).and_then(timer::Timer::from_spawn);
         let manager = vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR);
         phase = Phase::from_manager(manager);
         on_alert = manager.and_then(|s| match s.opt(b'a')?.first()? {
@@ -631,6 +638,7 @@ fn prepare(
         on_alert,
         arrivals: Vec::new(),
         rain: rain_spec,
+        timer: holds_timer,
         game_over: false,
         start_banks: gcl::Banks::default(),
         crowd_alarm: false,
@@ -674,6 +682,9 @@ fn main() -> Result<()> {
         && let Some(first) = title.main.first() {
             let mut vm = gcl::Vm::with_banks(&title, banks);
             vm.run(std::slice::from_ref(first));
+            // A new game's variables (`#b22659 difficulty`): story flags, the
+            // holds' time limit Au32:0x70, the Marines' tables...
+            vm.call_proc(0xB2_2659, &[i32::from(cli.difficulty)]);
             banks = vm.banks();
         }
     let from = cli.from.clone().or_else(|| (cli.stage == "w00a").then(|| "d01t".to_string()));
@@ -809,7 +820,7 @@ fn main() -> Result<()> {
         .add_systems(Startup, photo::setup_hud)
         .add_systems(
             Update,
-            (photo::control.before(player::control), photo::view.after(player::follow_camera), codec_followup.after(codec::input), speech, reinforcements.after(guard::think), snake_vars, crowd_watch.after(snake_vars))
+            (photo::control.before(player::control), photo::view.after(player::follow_camera), codec_followup.after(codec::input), speech, holds_timer, reinforcements.after(guard::think), snake_vars, crowd_watch.after(snake_vars))
                 .run_if(codec::idle)
                 .run_if(demo::idle),
         )
@@ -1040,8 +1051,12 @@ fn script_event(
     let script = game.data.script.as_ref().unwrap();
     let mut vm = gcl::Vm::with_banks(script, banks);
     vm.eager = true;
+    vm.timer = game.timer.as_ref().map_or(0, timer::Timer::frames);
     run(&mut vm);
     let (load, spawns, codec, banks) = vm.finish();
+    if let Some(t) = spawns.iter().filter(|s| s.kind == timer::TIMER_ACTOR).find_map(timer::Timer::from_spawn) {
+        game.timer = Some(t);
+    }
     game.cameras.apply(&spawns);
     apply_codec(game, &codec);
     game.arrivals.extend(spawns.into_iter().filter(|s| s.kind == guard::TROOPER_ACTOR).map(|s| (s, TROOPER_DELAY)));
@@ -1264,6 +1279,11 @@ fn apply_codec(game: &mut Game, reqs: &[gcl::CodecReq]) {
             CodecReq::Speech { id, then } => game.speech = Some((id, then, SPEECH_SECONDS)),
             CodecReq::Reset => game.codec_area = None,
             CodecReq::Sound(c) => game.sound_cmds.push(c),
+            CodecReq::Timer(m) => {
+                if let Some(t) = game.timer.as_mut() {
+                    t.paused = m == 0;
+                }
+            }
         }
     }
 }
@@ -1428,6 +1448,22 @@ fn speech(
     game.speech = None;
     if let Some(p) = then {
         info!("speech {id:#x} over: running {p:#x}");
+        script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[0]), &level, &bullets);
+    }
+}
+
+/// Counts the holds' timer down and runs its proc when it runs out.
+fn holds_timer(
+    mut commands: Commands,
+    time: Res<Time>,
+    session: Res<Session>,
+    mut game: ResMut<Game>,
+    level: LevelRoots,
+    bullets: Query<Entity, With<bullet::Bullet>>,
+) {
+    let Some(t) = game.bypass_change_detection().timer.as_mut() else { return };
+    if let Some(p) = t.tick(time.delta_secs()) {
+        info!("holds timer ran out: running {p:#x}");
         script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[0]), &level, &bullets);
     }
 }
@@ -1716,7 +1752,10 @@ fn hud(
     if inv.ration_equipped {
         carried.insert(0, "[Ration equipped]".into());
     }
-    let message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
+    let mut message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
+    if let Some(t) = &game.timer {
+        message += &format!("   TIME {}", t.text());
+    }
     **t = format!(
         "{}  {}  guards {}  camera: {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
          WASD move  Shift walk  C crouch  Z prone  Space action  F aim/fire M9  V punch  R equip ration  Q/E or RMB camera  F1 collision+routes  F2 vision cones  F3 script cameras",

@@ -82,6 +82,9 @@ const CALL_ON_CREATE: &[(u32, u8)] = &[(0xDDF5CA, b'w'), (0x59EDA8, b'e'), (0x5B
 pub const DIFFICULTY: u16 = 0x8;
 /// Story marker (bank A u32) set by the stage that sent Snake here.
 pub const PROGRESS: u16 = 0xC4;
+/// Bu32:0xb4: the current stage's name hash (set by the engine; the holds'
+/// shared script branches on it).
+pub const STAGE_NAME: u16 = 0xB4;
 
 /// Snake's position and facing for the next stage (bank A u32), as set by
 /// a stage exit before `load` and read by the player actor's `-p`/`-d`.
@@ -165,6 +168,8 @@ pub struct Vm<'a> {
     pub load: Option<String>,
     /// Run timer/fade callbacks immediately and stop at `load`.
     pub eager: bool,
+    /// Frames left on the holds' timer (`command #450c64`).
+    pub timer: i32,
     /// Codec requests from the stage script.
     pub codec: Vec<CodecReq>,
     /// Running a CODEC.DAT record: collect its dialogue lines.
@@ -190,6 +195,8 @@ pub const GAME_OVER: &str = "<game over>";
 /// `command #635875 [-l] -e { ... }`: runs the block once nothing else is
 /// on screen (the holds' "caught" and "time up" sequences); run at once.
 const WHEN_FREE: u32 = 0x635875;
+/// `command #450c64`: frames left on the holds' timer.
+const TIMER_LEFT: u32 = 0x450C64;
 
 /// The Codec command (`command #4a243a ...`) in stage scripts.
 pub const CODEC_COMMAND: u32 = 0x4A243A;
@@ -212,6 +219,8 @@ pub enum CodecReq {
     Reset,
     /// A raw sound driver command (`#f2eedc -c`).
     Sound(u32),
+    /// A message to the holds' timer: 0 pause, 1 run.
+    Timer(u32),
 }
 
 impl Banks {
@@ -223,6 +232,11 @@ impl Banks {
     pub fn set_a32(&mut self, offset: u16, v: i32) {
         let o = offset as usize;
         self.a[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn set_b32(&mut self, offset: u16, v: i32) {
+        let o = offset as usize;
+        self.b[o..o + 4].copy_from_slice(&v.to_le_bytes());
     }
 
     pub fn set_b16(&mut self, offset: u16, v: i16) {
@@ -241,6 +255,7 @@ impl<'a> Vm<'a> {
             traps: Vec::new(),
             load: None,
             eager: false,
+            timer: 0,
             codec: Vec::new(),
             codec_mode: false,
             lines: Vec::new(),
@@ -458,6 +473,11 @@ impl<'a> Vm<'a> {
             // Other commands' results are not modelled; read as 0.
             self.last = 0;
             None
+        } else if is("mesg") && matches!(a.first(), Some(Value::Name(h)) if *h & 0x00FF_FFFF == crate::timer::TIMER_ACTOR) {
+            if let Some(Value::Name(m)) = a.get(1) {
+                self.codec.push(CodecReq::Timer(*m & 0x00FF_FFFF));
+            }
+            None
         } else if is("mesg") && matches!(a.first(), Some(Value::Name(h)) if *h & 0x00FF_FFFF == SOUND_RELAY) {
             // `mesg #9b5b7f <target> <command>`: the sound relay actor
             // (`chara #c88afa #9b5b7f`) passes the command to the driver.
@@ -530,7 +550,7 @@ impl<'a> Vm<'a> {
         };
         let known = CALL_AFTER.contains(&id)
             || CODEC_THEN.contains(&id)
-            || [FILL_ARRAY, PHOTO_TARGET, PHOTO_DONE, SPEECH, SOUND, WHEN_FREE, str_code(b"rand")].contains(&id);
+            || [FILL_ARRAY, PHOTO_TARGET, PHOTO_DONE, SPEECH, SOUND, WHEN_FREE, TIMER_LEFT, str_code(b"rand")].contains(&id);
         known.then_some(id)
     }
 
@@ -543,7 +563,9 @@ impl<'a> Vm<'a> {
             _ => None,
         };
         self.last = 0;
-        if id == str_code(b"rand") {
+        if id == TIMER_LEFT {
+            self.last = self.timer;
+        } else if id == str_code(b"rand") {
             let n = a.get(1).map_or(0, |v| self.value(v, args).int().unwrap_or(0));
             self.last = self.rand(n);
         } else if id == FILL_ARRAY {

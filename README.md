@@ -77,7 +77,7 @@ creates), `--snake-at=x,y,z` and `--snake-dir` (4096 = full turn),
 t1,t2,..`, `--press-at t1,..` (action button), `--codec-at <seconds>`,
 `--codec-auto` (page through calls by themselves), `--shots
 "t,x,y,z,yaw,pitch;..."` (stand there and take a photo; a seventh value of
-0 only moves Snake), `--screenshot out.png --shot-at <seconds>`.
+0 only moves Snake), `--screenshot out.png --shot-at <seconds>`, `--look=x,y,z,yaw,pitch` (fixed camera).
 
 For example, the whole holds finale (four photos, the terminal, Otacon's
 review, the chapter's end):
@@ -137,13 +137,17 @@ What works:
   the Marines on watch in the holds use the guard AI with their own motions.
   A Marine in formation who sees Snake starts the script's own "caught"
   sequence, which ends the game. The commandant's speech and other spoken
-  lines play with their voices and subtitles (VOX.DAT / MOVIE.DAT).
+  lines play with their voices and subtitles (VOX.DAT / MOVIE.DAT), and the
+  holds' time limit (`#9b65f0`, 7 minutes from the new-game variables)
+  counts down on screen, ticking, and runs the script's proc at zero.
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range. In the holds, the
 camera is always available, a photo goes to the first empty album slot (else
-over the worst one), the speech running out does not end the game yet, and
-the Marines' slung rifles are not shown.
+over the worst one) and the Marines' slung rifles are not shown. Open: the
+holds' shared script picks the speech's closing line as soon as the speech
+starts in w04a (`#86e3c2` tests `Bu32:0xb4 != "w04b" && !Abit:0xb63.5`;
+some engine state behind it is not modelled yet).
 
 ## Viewer
 

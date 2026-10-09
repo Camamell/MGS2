@@ -357,3 +357,19 @@ image (w00a addresses `0x3AF000..0x3B5000`).
 
 `lt2`, `cv2`, `evm`, `far`, `o2d`, `sar`, `var`, `zms`, `r*`, and the `anm`
 sound-bank pages.
+
+## GCL expressions (`FUN_00154080`, `FUN_00153f40`)
+
+- RPN: values, then `0x31 op` tokens; `0x31 0` ends. Binary ops take
+  (second from top, top); 0x16 assigns, 0x17 returns its right operand. An
+  expression may leave several values (the extractor prints them joined by
+  ", "): the result is the top one, so `if (0, X)` tests X.
+  `examples/gcx_rpn.rs` dumps the raw RPN of expressions reading a variable.
+- `Bu32:0xb4` holds the current stage's name hash (the holds' shared script
+  branches on it). A new game runs n_title's `#b22659 difficulty`, which sets
+  story variables and `Au32:0x70 = 25200`, the holds' time limit in frames.
+- `chara #9b65f0 -t frames -p proc -s flags` is the holds' timer (w04
+  residents `FUN_0028fe00` / `FUN_0028f890`): counts 60 a second while
+  running (`mesg #9b65f0 #000001` runs, `#000000` pauses, `-s` bit 0 starts
+  paused), shows mm:ss:cc, ticks with effect 0x585 each second (0xcf under
+  600 frames), runs `-p` at zero; `command #450c64` reads the frames left.
