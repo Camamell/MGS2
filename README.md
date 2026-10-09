@@ -107,6 +107,8 @@ What works:
   the alert phase as `bgmanage.c` does (`re/notes/sound.md`; not yet checked
   by ear against the game), and its sound effects: the M9, guards' and Olga's
   shots, doors, damage, footsteps and the alert sting, placed by the camera.
+- The sea around the ship from the stage script's `wave2.c` (its textures,
+  height and lighting; the swell is approximated).
 - Rain on the open decks where the stage script sets it up (`rain.c`:
   streaks around the camera, not where its boxes exclude it).
 - The stage scripts' own cameras (follow-in-box and fixed, switched by traps)

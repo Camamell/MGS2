@@ -13,6 +13,7 @@ mod contact;
 mod crowd;
 mod demo;
 mod music;
+mod sea;
 mod sfx;
 mod gcl;
 mod guard;
@@ -90,6 +91,10 @@ struct Cli {
     /// Start with the stage cameras off (F3 toggles).
     #[arg(long)]
     no_stage_cams: bool,
+    /// Fix the camera at `x,y,z,yaw,pitch` (mm, degrees; yaw 0 = +z), for
+    /// screenshots.
+    #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
+    look: Vec<f32>,
     /// Press Space (grab a ledge / pull up) at this time (seconds).
     #[arg(long)]
     hang_at: Option<f32>,
@@ -789,6 +794,16 @@ fn main() -> Result<()> {
     app.add_systems(Update, (codec::input, codec::screen, codec::voice).chain().run_if(demo::idle));
     app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
+    if let [x, y, z, yaw, pitch] = cli.look[..] {
+        let tf = Transform::from_translation(Vec3::new(x, y, z) * mgs2_bevy::scene::SCALE)
+            .with_rotation(Quat::from_euler(EulerRot::YXZ, (yaw + 180.0).to_radians(), pitch.to_radians(), 0.0));
+        app.add_systems(PostUpdate, (move |mut cam: Query<&mut Transform, With<FollowCam>>| {
+            for mut t in &mut cam {
+                *t = tf;
+            }
+        }).before(bevy::transform::TransformSystems::Propagate));
+    }
+    app.add_systems(Update, (sea::setup, sea::animate.after(player::follow_camera)));
     app.add_systems(Update, sfx::footsteps.run_if(demo::idle).run_if(codec::idle));
     app.init_resource::<photo::PhotoMode>()
         .add_systems(Startup, photo::setup_hud)
