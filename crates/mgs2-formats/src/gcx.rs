@@ -111,6 +111,8 @@ impl Op {
         }
     }
 
+    /// Neg, Not and BitNot use only their right operand; like every operator
+    /// they still pop two (the compiler emits `0 x !`).
     pub fn is_unary(self) -> bool {
         matches!(self, Op::Neg | Op::Not | Op::BitNot)
     }

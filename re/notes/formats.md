@@ -360,10 +360,12 @@ sound-bank pages.
 
 ## GCL expressions (`FUN_00154080`, `FUN_00153f40`)
 
-- RPN: values, then `0x31 op` tokens; `0x31 0` ends. Binary ops take
-  (second from top, top); 0x16 assigns, 0x17 returns its right operand. An
-  expression may leave several values (the extractor prints them joined by
-  ", "): the result is the top one, so `if (0, X)` tests X.
+- RPN: values, then `0x31 op` tokens; `0x31 0` ends. Every operator pops
+  two values, (second from top, top) (`FUN_00153f40(op, a, b)`): the unary
+  ones (1 neg, 2 !, 3 ~) use only the top, and the compiler pushes a dummy 0
+  before their operand (`0 x !`). 0x16 assigns, 0x17 returns its right
+  operand. The result is the top value. (Treating ! as popping one left the
+  dummies behind and dropped terms: the holds' speech bug below.)
   `examples/gcx_rpn.rs` dumps the raw RPN of expressions reading a variable.
 - `Bu32:0xb4` holds the current stage's name hash (the holds' shared script
   branches on it). A new game runs n_title's `#b22659 difficulty`, which sets
@@ -372,14 +374,7 @@ sound-bank pages.
   residents `FUN_0028fe00` / `FUN_0028f890`): counts 60 a second while
   running (`mesg #9b65f0 #000001` runs, `#000000` pauses, `-s` bit 0 starts
   paused), shows mm:ss:cc, ticks with effect 0x585 each second (0xcf under
-  600 frames), runs `-p` at zero; `command #450c64` reads the frames left.- The holds' speech (open): w03b -> d10t -> w04a -> w04b -> d11t -> w04c.
-  On entering w04a, `#f90a3d` -> `#ede110` (Marines' speaking order) ->
-  `#a6f927` -> `#86e3c2`, whose second branch is the raw RPN
-  `[#450c64 < 600, (Bu32:0xb4 != "w04b") && (0 || !Abit:0xb63.5)]`; the
-  evaluator (`FUN_00154080`, checked in its disassembly: the result is the
-  top value, `v0 = *top`) makes that true in w04a, so the speech's closing
-  line (MOVIE 0xab08) plays. `Abit:0xb63.5` is only set by w04b's
-  `#94ea87`; some engine-side state behind this is still unknown.
+  600 frames), runs `-p` at zero; `command #450c64` reads the frames left.- The holds' speech: w04a's `#86e3c2` tests `#450c64 < 600 && (Bu32:0xb4 != "w04b" || !Abit:0xb63.5)` (the closing line only in the last 10 seconds). `#450c64` returns the resident global the timer actor keeps (`DAT_003afbbc` in w04c), so a timer created earlier in the same script run already answers it.
 - `GCL_TRACE=1` makes the port log every proc call.
 ## FACE.DAT (Codec faces)
 

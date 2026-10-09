@@ -403,6 +403,12 @@ impl<'a> Vm<'a> {
             let eager = (self.eager && EAGER.contains(&spawn.kind))
                 .then(|| spawn.opt(b'p').and_then(|v| v.first().cloned()))
                 .flatten();
+            // A timer created by this run answers `#450c64` from now on.
+            if spawn.kind == crate::timer::TIMER_ACTOR
+                && let Some(t) = spawn.opt_int(b't', 0)
+            {
+                self.timer = t;
+            }
             self.spawns.push(spawn);
             if let Some(Val::Proc(p)) = on_create {
                 self.call(p, &[]);
@@ -570,6 +576,9 @@ impl<'a> Vm<'a> {
         self.last = 0;
         if id == TIMER_LEFT {
             self.last = self.timer;
+            if std::env::var_os("GCL_TRACE").is_some() {
+                eprintln!("gcl: timer left {}", self.timer);
+            }
         } else if id == str_code(b"rand") {
             let n = a.get(1).map_or(0, |v| self.value(v, args).int().unwrap_or(0));
             self.last = self.rand(n);
@@ -712,7 +721,10 @@ impl<'a> Vm<'a> {
                 }
                 ExprItem::Op(op) => {
                     let (b, _) = stack.pop().unwrap_or((0, None));
+                    // Every operator pops two (`FUN_00154080`); the compiler
+                    // puts a dummy 0 under a unary one's operand.
                     if op.is_unary() {
+                        stack.pop();
                         stack.push((unary(*op, b), None));
                         continue;
                     }

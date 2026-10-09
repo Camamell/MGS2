@@ -224,26 +224,51 @@ fn var_ty(t: u8) -> &'static str {
     }
 }
 
-/// Converts the RPN expression to infix text.
+/// C-like binding strength of an operator (higher binds tighter).
+fn precedence(op: mgs2_formats::gcx::Op) -> u8 {
+    use mgs2_formats::gcx::Op::*;
+    match op {
+        Assign | Second | Unknown(_) => 0,
+        Or => 1,
+        And => 2,
+        BitOr => 3,
+        BitXor => 4,
+        BitAnd => 5,
+        Eq | Ne => 6,
+        Lt | Le | Gt | Ge => 7,
+        Shl | Shr => 8,
+        Add | Sub => 9,
+        Mul | Div | Mod => 10,
+        Neg | Not | BitNot => 11,
+    }
+}
+
+/// Converts the RPN expression to infix text, with parentheses where the
+/// RPN groups against C precedence.
 fn infix(items: &[ExprItem], n: &Names) -> String {
-    let mut stack: Vec<String> = Vec::new();
+    const ATOM: u8 = 12;
+    let mut stack: Vec<(String, u8)> = Vec::new();
+    let wrap = |(s, p): (String, u8), min: u8| if p < min { format!("({s})") } else { s };
     for it in items {
         match it {
             ExprItem::Push(v) => {
                 let mut t = String::new();
                 value(&mut t, v, n, 0);
-                stack.push(t);
+                stack.push((t, ATOM));
             }
             ExprItem::Op(op) => {
+                let p = precedence(*op);
                 let b = stack.pop().unwrap_or_default();
                 if op.is_unary() {
-                    stack.push(format!("{}{b}", op.symbol()));
+                    // Its dummy 0 operand (every operator pops two).
+                    stack.pop();
+                    stack.push((format!("{}{}", op.symbol(), wrap(b, p)), p));
                 } else {
                     let a = stack.pop().unwrap_or_default();
-                    stack.push(format!("{a} {} {b}", op.symbol()));
+                    stack.push((format!("{} {} {}", wrap(a, p), op.symbol(), wrap(b, p + 1)), p));
                 }
             }
         }
     }
-    stack.join(", ")
+    stack.into_iter().map(|(s, _)| s).collect::<Vec<_>>().join(", ")
 }

@@ -151,10 +151,7 @@ What works:
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range. In the holds, the
 camera is always available, a photo goes to the first empty album slot (else
-over the worst one) and the Marines' slung rifles are not shown. Open: the
-holds' shared script picks the speech's closing line as soon as the speech
-starts in w04a (`#86e3c2` tests `Bu32:0xb4 != "w04b" && !Abit:0xb63.5`;
-some engine state behind it is not modelled yet).
+over the worst one) and the Marines' slung rifles are not shown.
 
 ## Viewer
 
