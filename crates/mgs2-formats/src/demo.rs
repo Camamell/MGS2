@@ -110,6 +110,18 @@ pub struct Demo {
     pub subtitles: Vec<Line>,
     pub fades: Vec<Fade>,
     pub fogs: Vec<DemoFog>,
+    /// Ambient colour (type-6 `0x1000006`, the engine's `FUN_00125eb0`).
+    pub ambients: Vec<(u32, [f32; 3])>,
+    /// The light (type-6 `0x1000007`): unit direction and colour (`FUN_00125ee0`,
+    /// `FUN_00125f68`). Colours count 128 as 1.0.
+    pub lights: Vec<DemoLight>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DemoLight {
+    pub frame: u32,
+    pub dir: [f32; 3],
+    pub color: [f32; 3],
 }
 
 /// Fog from a type-6 effect `0x1000000` (`FUN_002a24c8`): RGB, near and far
@@ -240,8 +252,8 @@ fn packet(chunk: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, A
 }
 
 /// Type 6: an effect constructor (`+0x10` id in the resident's command
-/// table, `+0x14` 0 = one-shot, parameters from `+0x20`). Only the fades are
-/// kept; durations are the difference of two frame stamps.
+/// table, `+0x14` 0 = one-shot, parameters from `+0x20`). Fog, ambient, light and
+/// fades are kept; durations are the difference of two frame stamps.
 fn effect(r: &[u8], frame: u32, demo: &mut Demo) {
     let p = |i: usize| u32_at(r, 0x20 + i * 4).map_or(0.0, |v| v as i32 as f32);
     let rgba = |i: usize| [p(i), p(i + 1), p(i + 2), p(i + 3)];
@@ -250,6 +262,15 @@ fn effect(r: &[u8], frame: u32, demo: &mut Demo) {
             let c = |i: usize| u32_at(r, 0x20 + i * 4).unwrap_or(0).min(255) as u8;
             let fl = |i: usize| f32_at(r, 0x20 + i * 4).unwrap_or(0.0);
             demo.fogs.push(DemoFog { frame, color: [c(0), c(1), c(2)], near: fl(4), far: fl(5) });
+        }
+        Some(0x0100_0006) => demo.ambients.push((frame, [p(0), p(1), p(2)])),
+        Some(0x0100_0007) => {
+            let fl = |i: usize| f32_at(r, 0x20 + i * 4).unwrap_or(0.0);
+            let (x, y, z) = (fl(4), fl(5), fl(6));
+            let len = (x * x + y * y + z * z).sqrt();
+            if len > 0.0 {
+                demo.lights.push(DemoLight { frame, dir: [x / len, y / len, z / len], color: [p(0), p(1), p(2)] });
+            }
         }
         Some(0x0100_0003) => demo.fades.push(Fade { frame, from: None, to: rgba(0), frames: p(4) - p(5) }),
         Some(0x0100_0008) => demo.fades.push(Fade { frame, from: Some(rgba(0)), to: rgba(4), frames: p(8) - p(9) }),

@@ -122,6 +122,38 @@ impl Cutscene {
         let k = self.demos[i].1.fogs.iter().rev().find(|k| k.frame as f32 <= f)?;
         Some(crate::fog::FogSpec { color: k.color, near: k.near, far: k.far })
     }
+
+    /// The playing demo's lighting at the current frame.
+    pub fn lighting(&self) -> Option<Lighting> {
+        let (i, f) = current(self)?;
+        let d = &self.demos[i].1;
+        let amb = d.ambients.iter().rev().find(|k| k.0 as f32 <= f).map(|k| k.1);
+        let light = d.lights.iter().rev().find(|k| k.frame as f32 <= f);
+        if amb.is_none() && light.is_none() {
+            return None;
+        }
+        Some(Lighting {
+            ambient: Vec3::from(amb.unwrap_or([128.0; 3])) / 128.0,
+            dir: light.map_or(Vec3::Y, |l| Vec3::from(l.dir)),
+            color: light.map_or(Vec3::ZERO, |l| Vec3::from(l.color)) / 128.0,
+        })
+    }
+}
+
+/// The engine's character lighting (ambient + colour x max(0, n . dir),
+/// 1.0 = 0x80; the GS modulates the texture by it, up to 255 / 128).
+#[derive(Clone, Copy, Debug)]
+pub struct Lighting {
+    pub ambient: Vec3,
+    pub dir: Vec3,
+    pub color: Vec3,
+}
+
+impl Lighting {
+    pub fn shade(&self, n: Vec3) -> [f32; 4] {
+        let c = (self.ambient + self.color * n.dot(self.dir).max(0.0)).min(Vec3::splat(255.0 / 128.0));
+        [c.x, c.y, c.z, 1.0]
+    }
 }
 
 pub fn idle(c: Res<Cutscene>) -> bool {
@@ -507,6 +539,7 @@ pub fn animate(
     }
     let (Some(data), Some((di, f))) = (c.stage.as_ref(), current(&c)) else { return };
     let demo = &c.demos[di].1;
+    let light = c.lighting();
 
     // Camera: the keys come every 5 frames; ease between them.
     let k = demo.cameras.partition_point(|k| (k.frame as f32) <= f);
@@ -587,6 +620,10 @@ pub fn animate(
                     pos.push((acc * SCALE).into());
                     nrm.push(accn.normalize_or(Vec3::Y).into());
                 }
+                if let Some(l) = light {
+                    let col: Vec<[f32; 4]> = nrm.iter().map(|n| l.shade(tf.rotation * Vec3::from(*n))).collect();
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+                }
                 mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
                 mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
             }
@@ -622,6 +659,10 @@ pub fn animate(
             let Some(mut mesh) = meshes.get_mut(&mesh3d.0) else { continue };
             let (pos, nrm) = anim::skin(model, part.object, part.mesh, &mats);
             let pos: Vec<[f32; 3]> = pos.into_iter().map(|v| (Vec3::from(v) * SCALE).into()).collect();
+            if let Some(l) = light {
+                let col: Vec<[f32; 4]> = nrm.iter().map(|n| l.shade(tf.rotation * Vec3::from(*n))).collect();
+                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+            }
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
         }

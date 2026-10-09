@@ -127,7 +127,7 @@ What works:
   the demo's actor stream, the cutscene stage's scenery, and subtitles
   (`--skip-cutscenes` to skip; Space next line, Esc skip), with the
   characters' skinned cutscene meshes (`.evm`) and the demos' own audio
-  (voices, music and effects), and their screen fades and flashes (other
+  (voices, music and effects), their screen fades and flashes, their own fog and the characters' lighting (other
   visual effects not yet).
   Exits through a cutscene continue to the stage it leads to.
 - The holds' finale (w04c): photograph Metal Gear RAY with the digital

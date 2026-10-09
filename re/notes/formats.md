@@ -403,7 +403,11 @@ sound-bank pages.
   bones 21-52, and `id + 1` (21 joints) the body bones 0-20; keys every 5
   ticks (`mgs2_formats::demo::face_stream`).- DEMO type-6 records: `+0x10` constructor id, looked up in the cutscene
   resident's command table (entries with high byte 1, e.g. d05t: 0x1000000
-  fog, 0x1000006 ambient colour, 0x1000007 light direction + colour,
+  fog, 0x1000006 ambient colour (RGB ints -> engine `0x190af0`, `FUN_00125eb0`),
+  0x1000007 light (RGB ints, then a float direction at param 4..6, normalised
+  x 4096 into the light matrix `0x190a80` via `FUN_00125ee0`, colour to
+  `0x190ac0`); the port shades characters ambient + colour x max(0, n . dir)
+  with 0x80 = 1.0 (the sign of dir is assumed),
   0x1000008 / 0x1000003 screen fade (`d_fade_io_prog.c`: RGBA from -> to,
   alpha 0x80 opaque, over the difference of two 60 Hz frame stamps),
   0x10fff00.. demo control); `+0x14` 0 runs it once with the parameters
