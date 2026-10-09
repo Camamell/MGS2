@@ -1,6 +1,6 @@
 //! The Codec's faces (FACE.DAT, see `mgs2_formats::face`).
 //!
-//! Each stage has a face pack (`f00a` for w00a...) with the speakers' 3D
+//! FACE.DAT's `f00a` pack holds the Tanker Codec speakers' 3D
 //! heads: Snake's `sna_radio_mh_mt.evm`, Otacon's `otc_radio_mh_mt.evm`,
 //! `otc_hair_mh.evm` and `otc_glasses_mt.kms`, with their texture sets. The
 //! heads are drawn on their own render layer, each by a camera into an image
@@ -38,11 +38,33 @@ pub struct HeadAnim {
     motion: Option<mgs2_formats::mar::Motion>,
     camera: Option<Entity>,
     place: Vec3,
+    who: u32,
 }
 
 #[derive(Resource, Default)]
 pub struct Faces {
     heads: Vec<HeadAnim>,
+}
+
+/// The face streams of the voice clip playing and when it started.
+#[derive(Default)]
+pub struct Lip {
+    voice: u32,
+    keys: std::collections::BTreeMap<u32, Vec<mgs2_formats::demo::ActorKey>>,
+    start: f32,
+}
+
+/// A stream's joints at 	ick (300 a second), eased between keys.
+fn sample(keys: &[mgs2_formats::demo::ActorKey], tick: f32) -> Vec<Quat> {
+    let i = keys.partition_point(|k| k.frame as f32 <= tick).max(1);
+    let a = &keys[(i - 1).min(keys.len() - 1)];
+    let b = keys.get(i).unwrap_or(a);
+    let t = if b.frame > a.frame { ((tick - a.frame as f32) / (b.frame - a.frame) as f32).clamp(0.0, 1.0) } else { 0.0 };
+    a.joints
+        .iter()
+        .zip(b.joints.iter().chain(std::iter::repeat(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])))
+        .map(|(x, y)| Quat::from_xyzw(x[0], x[1], x[2], x[3]).normalize().slerp(Quat::from_xyzw(y[0], y[1], y[2], y[3]).normalize(), t))
+        .collect()
 }
 
 #[derive(Component)]
@@ -68,9 +90,10 @@ pub fn setup_portraits(mut commands: Commands) {
     }
 }
 
-/// The face pack for a stage (`w01c` -> `f01c`).
+/// The face pack for a stage. FACE.DAT's `f00a` holds the Tanker's Codec
+/// (Snake, Otacon); `f01a`..`f06a` are the Plant's (Raiden, Rose, Campbell...).
 fn pack_name(stage: &str) -> Option<String> {
-    stage.strip_prefix('w').map(|rest| format!("f{rest}"))
+    stage.starts_with('w').then(|| "f00a".to_string())
 }
 
 /// Loads the stage's face pack and builds the heads and their cameras.
@@ -136,7 +159,7 @@ pub fn load(
         // The head bone (12 in the standard skeleton) of the first evm: kms
         // parts (glasses) hang from it, and the camera frames it.
         let mut head: Option<Vec3> = None;
-        let mut anim = HeadAnim { evms: Vec::new(), attached: Vec::new(), motion: None, camera: None, place: PLACE[i] };
+        let mut anim = HeadAnim { evms: Vec::new(), attached: Vec::new(), motion: None, camera: None, place: PLACE[i], who: *who };
         anim.motion = find(12, MOTIONS[i]).and_then(|f| mgs2_formats::mar::parse(&f.data).ok()).and_then(|m| m.motions.into_iter().next());
         for n in *names {
             let mut add = |mesh: Mesh, tex: u32, at: Vec3, commands: &mut Commands| {
@@ -232,25 +255,53 @@ pub fn show(
 }
 
 /// Poses the heads by their idle motions while a call is open.
+#[allow(clippy::too_many_arguments)]
 pub fn animate(
     time: Res<Time<Real>>,
     state: Res<CodecState>,
+    data: Option<Res<CodecData>>,
+    mut lip: Local<Lip>,
     faces: Option<Res<Faces>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mesh3d: Query<&Mesh3d>,
     mut tfs: Query<&mut Transform>,
 ) {
     let Some(faces) = faces else { return };
-    if state.call.is_none() {
+    let Some(call) = state.call.as_ref() else {
+        lip.voice = 0;
         return;
+    };
+    let now = time.elapsed_secs();
+    let t = now * 60.0;
+    // A clip covers a run of lines (as the Codec plays them): load its face
+    // streams when a new one starts.
+    if let Some(v) = call.voices.get(call.index).copied().filter(|v| *v != 0 && *v != lip.voice) {
+        lip.voice = v;
+        lip.start = now;
+        lip.keys = data.as_ref().and_then(|d| d.clip_chunks(v).ok()).map(|b| mgs2_formats::demo::face_stream(&b)).unwrap_or_default();
+        debug!("codec lip {v:#x}: {:?}", lip.keys.iter().map(|(a, k)| (format!("{a:06x}"), k.len())).collect::<Vec<_>>());
     }
-    let t = time.elapsed_secs() * 60.0;
+    let tick = (now - lip.start) * 300.0;
     for head in &faces.heads {
         let Some(motion) = &head.motion else { continue };
         let frame = t % motion.length.max(1) as f32;
         let mut head_bone = None;
         for (model, parts) in &head.evms {
-            let rots: Vec<Quat> = (0..model.bones.len()).map(|j| motion.rotation(j, frame).map(|q| Quat::from_xyzw(q[0], q[1], q[2], q[3]).normalize().conjugate()).unwrap_or(Quat::IDENTITY)).collect();
+            let mut rots: Vec<Quat> = (0..model.bones.len()).map(|j| motion.rotation(j, frame).map(|q| Quat::from_xyzw(q[0], q[1], q[2], q[3]).normalize().conjugate()).unwrap_or(Quat::IDENTITY)).collect();
+            // The voice's face stream: the speaker's 32 face joints (bones
+            // 21 on) and, for Otacon, a 21-joint body stream (bones 0-20).
+            for (actor, keys) in &lip.keys {
+                if keys.is_empty() || (*actor != head.who && *actor != head.who + 1) {
+                    continue;
+                }
+                let q = sample(keys, tick);
+                let first = if q.len() == 32 { 21 } else { 0 };
+                for (j, r) in q.into_iter().enumerate() {
+                    if let Some(slot) = rots.get_mut(first + j) {
+                        *slot = r;
+                    }
+                }
+            }
             let mats = crate::demo::evm_pose(model, &rots, None);
             if head_bone.is_none() {
                 head_bone = mats.get(12).copied();

@@ -196,16 +196,24 @@ fn packet(chunk: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, A
 }
 
 fn actors(r: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, ActorKey>) {
-    let count = u32_at(r, 0x10).unwrap_or(0) as usize;
+    stream(r, 0x10, 0x20, false, frame, &mut demo.actors, state);
+}
+
+/// An actor stream record: u32 count at count_at, 12-byte entries from
+/// entries_at; data offsets count from the record, or (fter) from the
+/// end of the entries.
+fn stream(r: &[u8], count_at: usize, entries_at: usize, after: bool, frame: u32, out: &mut BTreeMap<u32, Vec<ActorKey>>, state: &mut BTreeMap<u32, ActorKey>) {
+    let count = (u32_at(r, count_at).unwrap_or(0) as usize).min(64);
+    let base = if after { entries_at + count * 12 } else { 0 };
     for i in 0..count {
-        let e = 0x20 + i * 12;
+        let e = entries_at + i * 12;
         let (Some(id), Some(flags), Some(off)) = (u32_at(r, e), u16_at(r, e + 4), u16_at(r, e + 8)) else { break };
         let joints = r.get(e + 7).copied().unwrap_or(0) as usize;
         let st = state.entry(id).or_insert_with(|| ActorKey { frame, pos: [0.0; 3], angles: [0; 3], joints: Vec::new() });
         if st.joints.len() < joints {
             st.joints.resize(joints, [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
         }
-        let mut q = off as usize;
+        let mut q = base + off as usize;
         if flags & 1 != 0 {
             st.pos = [f32_at(r, q).unwrap_or(0.0), f32_at(r, q + 4).unwrap_or(0.0), f32_at(r, q + 8).unwrap_or(0.0)];
             q += 16;
@@ -235,8 +243,48 @@ fn actors(r: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, Actor
             }
         }
         st.frame = frame;
-        demo.actors.entry(id).or_default().push(st.clone());
+        out.entry(id).or_default().push(st.clone());
     }
+}
+
+/// The face streams of a voice clip (VOX.DAT / MOVIE.DAT kind-5 chunks): per
+/// actor (Codec speaker), keys of joint rotations every 5 ticks. A chunk holds
+/// records u32 0x1000, u32 size, u32 0, u32 count, 12-byte entries u32
+/// actor, u16 flags, u8, u8 joints, u16 data offset, u16 and the data
+/// (as the cutscene actor stream, offsets from the end of the entries). The
+/// 32-joint actors are a speaker's face bones (21 on of the Codec heads'
+/// standard skeleton).
+pub fn face_stream(data: &[u8]) -> BTreeMap<u32, Vec<ActorKey>> {
+    let mut out = BTreeMap::new();
+    let mut state = BTreeMap::new();
+    let mut pos = 0;
+    let mut n = 0;
+    while let (Some(kind), Some(size), Some(frame)) = (u32_at(data, pos), u32_at(data, pos + 4), u32_at(data, pos + 8)) {
+        let size = size as usize;
+        if !(16..=0x10_0000).contains(&size) || pos + size > data.len() || (kind == 0x10 && n > 0) {
+            break;
+        }
+        if kind == 5 {
+            let chunk = &data[pos + 16..pos + size];
+            let mut p = 0;
+            while let (Some(t), Some(sz)) = (u32_at(chunk, p), u32_at(chunk, p + 4)) {
+                let sz = sz as usize;
+                if sz < 16 || p + sz > chunk.len() {
+                    break;
+                }
+                if t == 0x1000 {
+                    stream(&chunk[p..p + sz], 0x0C, 0x10, true, frame, &mut out, &mut state);
+                }
+                p += sz;
+            }
+        }
+        if kind == 0xF0 {
+            break;
+        }
+        n += usize::from(kind != 0x10);
+        pos += size;
+    }
+    out
 }
 
 /// Subtitle chunk: `u32 size`, then records `u32 start, u32 end, u32 0, u32

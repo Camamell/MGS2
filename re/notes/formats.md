@@ -385,7 +385,8 @@ sound-bank pages.
 
 - Header sector: `u32 stamp, u16 1, u16 1, u16 count`, entries from +16 of
   `char name[8], u32 sector`: `node photo capture mobile` (menus) and one
-  per stage (`f00a` for w00a ... `f06a`). Each entry is a plaintext
+  per Codec cast (`f00a` the Tanker's Snake and Otacon; `f01a`..`f06a`
+  the Plant's Raiden, Rose, Campbell...). Each entry is a plaintext
   stage-style page list (`u32 n`, pairs `a, b`; a `0x7F000002` page with
   its size, then `type << 24 | hash` files at offsets, listed by type).
 - Contents (names from JoyDict): `sna_radio_mh_mt.evm/.tri` (Snake's
@@ -394,4 +395,10 @@ sound-bank pages.
   `lip_*_nom_eye_toji.rmt`, `save_load.o2d`, `tnkicon.ric`. The heads use
   the standard skeleton: bone 12 is the head (Otacon's at y 578 mm),
   bones 21+ the face; kms parts hang from bone 12. `mgs2_formats::face`
-  reads an entry; `examples/face_dump.rs` lists them and writes textures.
+  reads an entry; `examples/face_dump.rs` lists them and writes textures.- Voice clips' kind-5 chunks are the speakers' face animation: records
+  `u32 0x1000, u32 size, u32 0, u32 count`, 12-byte entries `u32 actor,
+  u16 flags, u8, u8 joints, u16 offset, u16`, then the cutscene actor-stream
+  joint data (offsets from the end of the entries). Actors are speaker ids
+  (`0x28dce6` Snake, `0x4ab569` Otacon) with 32 joints = the heads' face
+  bones 21-52, and `id + 1` (21 joints) the body bones 0-20; keys every 5
+  ticks (`mgs2_formats::demo::face_stream`).

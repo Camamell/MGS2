@@ -1,9 +1,9 @@
 //! FACE.DAT: the Codec's 3D faces.
 //!
 //! A header sector: `u32 stamp, u16 1, u16 1, u16 count, ...` and from +16
-//! `count` entries of `char name[8], u32 sector`. Entries are named after the
-//! stages they serve (`f00a` for w00a, `f04c` for w04c; also `node`,
-//! `photo`, `capture`, `mobile` for menus). Each is a plaintext stage-style
+//! `count` entries of `char name[8], u32 sector`. Entries are Codec casts
+//! (`f00a` the Tanker's Snake and Otacon, `f01a`..`f06a` the Plant's Raiden,
+//! Rose, Campbell...) and menus (`node`, `photo`, `capture`, `mobile`). Each is a plaintext stage-style
 //! page list (`u32 n`, `n` pairs `a, b`; see `stage_dat`): a cached page
 //! (`0x7F000002`, `b` its size) holding the files `type << 24 | hash`. Faces
 //! are `.evm` heads with their texture sets (`sna_radio_mh_mt`,

@@ -39,13 +39,19 @@ impl CodecData {
     /// in VOX.DAT, or, where none starts there, in MOVIE.DAT (the holds'
     /// speech: the same chunks plus an IPU video stream).
     pub fn clip(&self, id: u32) -> anyhow::Result<(mgs2_formats::vox::Clip, Vec<mgs2_formats::demo::Line>)> {
-        let sector = u64::from(id.wrapping_sub(0x2000_0000));
-        let mut bytes = Self::chunks(&self.iso, "MGS2/VOX.DAT", sector)?;
-        if bytes.is_empty() {
-            bytes = Self::chunks(&self.iso, "MGS2/MOVIE.DAT", sector)?;
-        }
+        let bytes = self.clip_chunks(id)?;
         let clip = mgs2_formats::vox::decode_clip(&bytes).ok_or_else(|| anyhow::anyhow!("no audio in voice {id:#x}"))?;
         Ok((clip, mgs2_formats::demo::parse(&bytes).subtitles))
+    }
+
+    /// A spoken clip's raw chunks (VOX.DAT, else MOVIE.DAT).
+    pub fn clip_chunks(&self, id: u32) -> anyhow::Result<Vec<u8>> {
+        let sector = u64::from(id.wrapping_sub(0x2000_0000));
+        let bytes = Self::chunks(&self.iso, "MGS2/VOX.DAT", sector)?;
+        if !bytes.is_empty() {
+            return Ok(bytes);
+        }
+        Self::chunks(&self.iso, "MGS2/MOVIE.DAT", sector)
     }
 
     /// The chunks of the clip starting at `sector` of `file` (none if no
