@@ -100,7 +100,7 @@ pub struct Cutscene {
     pub stage: Option<StageData>,
     /// The scenery the cutscene stage's script places (its deck pieces,
     /// sky and sea): models of `stage` and their placement.
-    pub scenery: Vec<(usize, Transform)>,
+    pub scenery: Vec<(usize, Transform, Option<u32>)>,
     /// Without scenery, the level of the stage the cutscene was reached
     /// from is shown behind the actors.
     pub backdrop: Option<StageData>,
@@ -459,8 +459,12 @@ pub fn stage(
     let data = c.stage.as_ref().unwrap();
     let mut cull = MaterialCache { cull: Some(bevy::render::render_resource::Face::Front), ..default() };
     if !c.scenery.is_empty() {
-        for (model, tf) in &c.scenery {
-            let e = scene::spawn_model(&mut commands, &data.models[*model].1, data, &mut cull, &mut meshes, &mut images, &mut materials, true, Backdrop);
+        for (model, tf, lt2) in &c.scenery {
+            let e = if lt2.is_some() {
+                scene::spawn_model_lit(&mut commands, &data.models[*model].1, data, &mut cull, &mut meshes, &mut images, &mut materials, true, Backdrop, *tf, *lt2)
+            } else {
+                scene::spawn_model(&mut commands, &data.models[*model].1, data, &mut cull, &mut meshes, &mut images, &mut materials, true, Backdrop)
+            };
             commands.entity(e).insert(*tf);
         }
     } else if let Some(b) = &c.backdrop {

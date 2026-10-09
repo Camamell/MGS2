@@ -136,13 +136,13 @@ pub fn model_meshes(model: &kms::Model) -> Vec<(u32, Mesh, Part)> {
 /// piece's placement (translation in metres, as on its entity). Colours are
 /// scaled so 128 = 1.0.
 pub fn light_meshes(model: &kms::Model, parts: &mut [(u32, Mesh, Part)], lt2: &mgs2_formats::lt2::Lt2, place: Transform) {
-    let (rot, at) = (place.rotation, place.translation / SCALE);
+    let rot = place.rotation;
     use bevy::mesh::VertexAttributeValues as V;
     let objects = parts.iter().map(|p| p.2.object).max().map_or(0, |m| m + 1);
     for o in 0..objects.min(model.objects.len()) {
         let world = |m: &Mesh| -> Vec<Vec3> {
             match m.attribute(Mesh::ATTRIBUTE_POSITION) {
-                Some(V::Float32x3(p)) => p.iter().map(|v| rot * Vec3::from(*v) / SCALE + at).collect(),
+                Some(V::Float32x3(p)) => p.iter().map(|v| place.transform_point(Vec3::from(*v)) / SCALE).collect(),
                 _ => Vec::new(),
             }
         };
@@ -198,8 +198,8 @@ pub fn spawn_model(
     parent
 }
 
-/// [`spawn_model`] for a model placed at `place`, lit by the stage's lighting
-/// (its first lt2; gameplay stages have one) the way map pieces are.
+/// [`spawn_model`] for a model placed at `place`, lit the way map pieces are
+/// by the stage's lt2 named `lt2` (else its first; gameplay stages have one).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_model_lit(
     commands: &mut Commands,
@@ -212,9 +212,11 @@ pub fn spawn_model_lit(
     unlit: bool,
     root: impl Bundle,
     place: Transform,
+    lt2: Option<u32>,
 ) -> Entity {
     let mut parts = model_meshes(model);
-    if let Some((_, l)) = data.lights.first().filter(|_| std::env::var_os("MGS2_NO_LT2").is_none()) {
+    let named = lt2.and_then(|h| data.lights.iter().find(|(x, _)| *x & 0xFF_FFFF == h & 0xFF_FFFF));
+    if let Some((_, l)) = named.or(data.lights.first()).filter(|_| std::env::var_os("MGS2_NO_LT2").is_none()) {
         light_meshes(model, &mut parts, l, place);
     }
     let parent = commands.spawn((root, place, Visibility::default())).id();

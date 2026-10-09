@@ -278,6 +278,8 @@ struct Prop {
     transform: Transform,
     /// Drawn without fog (the distant skyline).
     no_fog: bool,
+    /// The lt2 lighting it names (`-l`, scenery only).
+    lt2: Option<u32>,
 }
 
 const PROP_ACTORS: &[u32] = &[0x7A8EC1, 0xD1279A, 0xCBA568];
@@ -299,7 +301,7 @@ fn door_props(s: &gcl::Spawn, data: &StageData) -> Vec<Prop> {
         .filter_map(|m| {
             let hash = m.int()? as u32 & 0x00FF_FFFF;
             let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == hash)?;
-            Some(Prop { model, transform, no_fog: false })
+            Some(Prop { model, transform, no_fog: false, lt2: None })
         })
         .collect()
 }
@@ -326,7 +328,7 @@ fn sliding_door(s: &gcl::Spawn, data: &StageData) -> Option<(Prop, SlidingDoor)>
         scale: Vec3::ONE,
     };
     let width = s.opt_int(b's', 0).filter(|w| *w > 0).unwrap_or(1000) as f32 * SCALE;
-    Some((Prop { model, transform, no_fog: false }, SlidingDoor { closed: transform, slide: transform.rotation * Vec3::X * width, open: 0.0 }))
+    Some((Prop { model, transform, no_fog: false, lt2: None }, SlidingDoor { closed: transform, slide: transform.rotation * Vec3::X * width, open: 0.0 }))
 }
 
 /// Sliding doors open for anyone within 2 m and close again after.
@@ -366,6 +368,7 @@ fn skyline(s: &gcl::Spawn, data: &StageData) -> Vec<Prop> {
             model: idx,
             transform: Transform::from_translation(Vec3::new(*x, y, 0.0) * SKYLINE_SCALE * SCALE).with_scale(Vec3::splat(SKYLINE_SCALE)),
             no_fog: true,
+            lt2: None,
         })
         .collect()
 }
@@ -387,7 +390,12 @@ fn prop(s: &gcl::Spawn, data: &StageData) -> Option<Prop> {
         rotation: Quat::from_euler(EulerRot::YXZ, angle(1), angle(0), angle(2)),
         scale: Vec3::new(v(b's', 0, 100), v(b's', 1, 100), v(b's', 2, 100)) / 100.0,
     };
-    Some(Prop { model, transform, no_fog: false })
+    let lt2 = match s.opt(b'l').and_then(|l| l.first()) {
+        Some(gcl::Val::Str(name)) => Some(str_code(name.as_bytes())),
+        Some(v) if s.kind == 0x7A8EC1 => v.int().map(|h| h as u32),
+        _ => None,
+    };
+    Some(Prop { model, transform, no_fog: false, lt2 })
 }
 
 /// A stage ready to be put into the world.
@@ -935,7 +943,7 @@ fn spawn_level(
         let e = if p.no_fog {
             scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity)
         } else {
-            scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, p.transform)
+            scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, p.transform, p.lt2)
         };
         commands.entity(e).insert(p.transform);
         if p.no_fog {
@@ -944,7 +952,7 @@ fn spawn_level(
     }
     for (p, door) in cast.sliding {
         let model = &data.models[p.model].1;
-        let e = scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, p.transform);
+        let e = scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, p.transform, p.lt2);
         commands.entity(e).insert((p.transform, door));
     }
     for (item, model) in cast.items {
@@ -953,7 +961,7 @@ fn spawn_level(
         }
         let model = &data.models[model].1;
         let at = Transform::from_translation(item.pos * SCALE);
-        let e = scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, at);
+        let e = scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, at, None);
         commands.entity(e).insert((at, item));
     }
     let mut spawn = |commands: &mut Commands, model: usize, bundle: Body| {
@@ -1228,14 +1236,14 @@ const BACKDROP_ACTORS: &[u32] = &[0x6273B5, 0xA895C4];
 
 /// The scenery a cutscene stage's script sets up: its props (the deck
 /// pieces, `0x7a8ec1`), sky and sea, as (model, transform).
-fn cutscene_scenery(script: &mgs2_formats::gcx::Gcx, data: &StageData, banks: &gcl::Banks) -> Vec<(usize, Transform)> {
+fn cutscene_scenery(script: &mgs2_formats::gcx::Gcx, data: &StageData, banks: &gcl::Banks) -> Vec<(usize, Transform, Option<u32>)> {
     let mut vm = gcl::Vm::with_banks(script, banks.clone());
     vm.run(&script.main);
     vm.spawns
         .iter()
         .filter(|s| PROP_ACTORS.contains(&s.kind) || BACKDROP_ACTORS.contains(&s.kind))
         .filter_map(|s| prop(s, data))
-        .map(|p| (p.model, p.transform))
+        .map(|p| (p.model, p.transform, p.lt2))
         .collect()
 }
 
