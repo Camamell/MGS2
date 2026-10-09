@@ -851,6 +851,7 @@ fn main() -> Result<()> {
         app.insert_resource(c);
     }
     app.add_systems(Update, body::hold.after(body::skin).before(player::follow_camera));
+    app.add_systems(Update, (body::add_shadows, body::update_shadows.after(body::skin)));
     app.add_systems(Update, boss_defeat.after(olga::think).run_if(codec::idle).run_if(demo::idle));
     app.add_systems(Update, olga::think.after(guard::think).before(bullet::fly).run_if(codec::idle).run_if(demo::idle));
     if cli.trace {

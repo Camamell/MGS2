@@ -189,3 +189,96 @@ pub fn skin(
         }
     }
 }
+
+/// A character's shadow on the floor under it. The game links a low-poly
+/// shadow model to the body (`sna_shadow` for Snake, joined when the object
+/// counts match, `FUN_00129448`) and draws it as a shadow volume; here it
+/// is posed like the body and flattened onto the floor at its feet, drawn
+/// translucent black (an approximation: straight down, flat floors).
+#[derive(Component)]
+pub struct DropShadow {
+    model: usize,
+}
+
+/// Shadow models by body model name.
+const SHADOW_MODELS: &[(&str, &str)] = &[("sna_def", "sna_shadow")];
+
+/// Gives every new body its shadow.
+pub fn add_shadows(
+    mut commands: Commands,
+    game: Res<Game>,
+    added: Query<(Entity, &Body), Added<Body>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut material: Local<Option<Handle<StandardMaterial>>>,
+) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    use mgs2_formats::str_code;
+    for (e, b) in &added {
+        let data = &game.data;
+        let body_hash = data.models[b.model].0;
+        let objects = data.models[b.model].1.objects.len();
+        let model = SHADOW_MODELS
+            .iter()
+            .filter(|(body, _)| str_code(body.as_bytes()) == body_hash)
+            .find_map(|(_, s)| data.models.iter().position(|(h, m)| *h == str_code(s.as_bytes()) && m.objects.len() == objects))
+            .unwrap_or(b.model);
+        let mat = material
+            .get_or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: Color::srgba(0.0, 0.0, 0.0, 0.45),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    cull_mode: None,
+                    double_sided: true,
+                    ..default()
+                })
+            })
+            .clone();
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; 3]);
+        mesh.insert_indices(Indices::U32(vec![0, 1, 2]));
+        let child = commands
+            .spawn((DropShadow { model }, Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::default(), Visibility::default()))
+            .id();
+        commands.entity(e).add_child(child);
+    }
+}
+
+/// Poses each shadow like its body and flattens it onto the floor.
+pub fn update_shadows(
+    game: Res<Game>,
+    bodies: Query<&Body>,
+    shadows: Query<(&DropShadow, &ChildOf, &Mesh3d)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    use bevy::mesh::Indices;
+    /// Above the floor, against z-fighting (mm).
+    const LIFT: f32 = 15.0;
+    for (s, parent, m3) in &shadows {
+        let Ok(b) = bodies.get(parent.parent()) else { continue };
+        let model = &game.data.models[s.model].1;
+        let motion = b.motions.and_then(|m| game.data.motions[m].1.motions.get(b.motion));
+        let mats = anim::pose(model, motion, b.frame, false);
+        let mut pos: Vec<[f32; 3]> = Vec::new();
+        let mut idx: Vec<u32> = Vec::new();
+        for (o, obj) in model.objects.iter().enumerate() {
+            for (mi, mesh) in obj.meshes.iter().enumerate() {
+                if mesh.indices.is_empty() {
+                    continue;
+                }
+                let base = pos.len() as u32;
+                let (p, _) = anim::skin(model, o, mi, &mats);
+                pos.extend(p.into_iter().map(|v| [v[0] * SCALE, LIFT * SCALE, v[2] * SCALE]));
+                idx.extend(mesh.indices.iter().map(|i| base + i));
+            }
+        }
+        let Some(mut mesh) = meshes.get_mut(&m3.0) else { continue };
+        let n = pos.len();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; n]);
+        mesh.insert_indices(Indices::U32(idx));
+    }
+}
