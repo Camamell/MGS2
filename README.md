@@ -61,6 +61,7 @@ too.
 | F (hold, release) | aim (A/D turn) and fire the M9 tranquilizer; aiming at an unaware guard from behind holds him up, and from his front he gives up his dog tags |
 | V | punch (three in a row knock a guard out) |
 | R | equip / unequip a ration (revives Snake at zero life) |
+| X (hold) | first-person view: A/D turn, W/S look up / down |
 | K | call the Codec (141.12); Space next line, Esc hang up |
 | C (holds, w04c) | digital camera: first-person view; A/D W/S aim, Q/E zoom, F take a photo |
 | Enter | continue after a game over |
