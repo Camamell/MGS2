@@ -96,7 +96,12 @@ pub fn hold(
     game: Res<Game>,
     bodies: Query<(&Body, Option<&crate::player::Player>), Without<Held>>,
     mut held: Query<(Entity, &Held, &mut Transform, &mut Visibility)>,
+    children: Query<&Children>,
+    parts: Query<&Mesh3d, With<Part>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut last: Local<std::collections::HashMap<Entity, Vec3>>,
 ) {
+    let lt2 = game.data.lights.first().map(|(_, l)| l).filter(|_| std::env::var_os("MGS2_NO_LT2").is_none());
     for (e, h, mut t, mut vis) in &mut held {
         let Ok((b, player)) = bodies.get(h.owner) else {
             // Its owner has gone (a trooper who left).
@@ -111,6 +116,30 @@ pub fn hold(
         *t = owner * Transform::from_translation(pos * SCALE).with_rotation(rot * h.grip);
         let shown = !h.when_aiming || player.is_some_and(|p| p.aiming);
         *vis = if shown { Visibility::Inherited } else { Visibility::Hidden };
+        // Lit like its owner, again whenever it has moved 10 cm.
+        if let Some(l) = lt2.filter(|_| shown)
+            && last.get(&e).is_none_or(|p| p.distance(t.translation) > 0.1)
+        {
+            last.insert(e, t.translation);
+            let at = t.translation / SCALE;
+            let reach = Vec3::splat(1000.0);
+            let lights = l.gather((at - reach).into(), (at + reach).into());
+            for child in children.iter_descendants(e) {
+                let Ok(m3) = parts.get(child) else { continue };
+                let Some(mut mesh) = meshes.get_mut(&m3.0) else { continue };
+                use bevy::mesh::VertexAttributeValues as V;
+                let (Some(V::Float32x3(p)), Some(V::Float32x3(n))) = (mesh.attribute(Mesh::ATTRIBUTE_POSITION), mesh.attribute(Mesh::ATTRIBUTE_NORMAL)) else { continue };
+                let col: Vec<[f32; 4]> = p
+                    .iter()
+                    .zip(n)
+                    .map(|(p, n)| {
+                        let c = l.shade((t.transform_point(Vec3::from(*p)) / SCALE).into(), (t.rotation * Vec3::from(*n)).into(), &lights);
+                        [c[0] / 128.0, c[1] / 128.0, c[2] / 128.0, 1.0]
+                    })
+                    .collect();
+                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+            }
+        }
     }
 }
 
