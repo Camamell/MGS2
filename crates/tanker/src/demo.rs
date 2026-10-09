@@ -234,7 +234,7 @@ pub fn evm_meshes(m: &mgs2_formats::evm::Model) -> Vec<(u32, Mesh, usize)> {
 
 /// Posed bone matrices (mm) of an evm: each bone turns by its joint's
 /// rotation about its bind offset from the parent; `root` places bone 0.
-fn evm_pose(m: &mgs2_formats::evm::Model, rotations: &[Quat], root: Option<Vec3>) -> Vec<bevy::math::Affine3A> {
+pub fn evm_pose(m: &mgs2_formats::evm::Model, rotations: &[Quat], root: Option<Vec3>) -> Vec<bevy::math::Affine3A> {
     use bevy::math::Affine3A;
     let mut out: Vec<Affine3A> = Vec::with_capacity(m.bones.len());
     for (i, b) in m.bones.iter().enumerate() {

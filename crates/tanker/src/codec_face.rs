@@ -28,6 +28,22 @@ const HEADS: [(u32, &[&str]); 2] = [(0x28DCE6, &["sna_radio_mh_mt"]), (0x4AB569,
 /// Where the heads are put, far from any stage (m).
 const PLACE: [Vec3; 2] = [Vec3::new(-2000.0, -2000.0, 0.0), Vec3::new(2000.0, -2000.0, 0.0)];
 const SIZE: u32 = 256;
+/// Each head's motion archive (its first motion: an idle loop).
+const MOTIONS: [&str; 2] = ["cdc_snake", "cdc_otacon"];
+
+/// A head's skinned meshes and the parts that follow its head bone.
+pub struct HeadAnim {
+    evms: Vec<(mgs2_formats::evm::Model, Vec<(Entity, usize)>)>,
+    attached: Vec<Entity>,
+    motion: Option<mgs2_formats::mar::Motion>,
+    camera: Option<Entity>,
+    place: Vec3,
+}
+
+#[derive(Resource, Default)]
+pub struct Faces {
+    heads: Vec<HeadAnim>,
+}
 
 #[derive(Component)]
 pub struct FacePart;
@@ -113,12 +129,15 @@ pub fn load(
     };
     let find = |t: u8, n: &str| -> Option<&FaceFile> { files.iter().find(|f| f.type_id == t && f.hash == str_code(n.as_bytes())) };
     let mut built = 0;
+    let mut heads = Vec::new();
     for (i, (who, names)) in HEADS.iter().enumerate() {
         let root = commands.spawn((FacePart, Transform::from_translation(PLACE[i]), Visibility::Visible, RenderLayers::layer(LAYER))).id();
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         // The head bone (12 in the standard skeleton) of the first evm: kms
         // parts (glasses) hang from it, and the camera frames it.
         let mut head: Option<Vec3> = None;
+        let mut anim = HeadAnim { evms: Vec::new(), attached: Vec::new(), motion: None, camera: None, place: PLACE[i] };
+        anim.motion = find(12, MOTIONS[i]).and_then(|f| mgs2_formats::mar::parse(&f.data).ok()).and_then(|m| m.motions.into_iter().next());
         for n in *names {
             let mut add = |mesh: Mesh, tex: u32, at: Vec3, commands: &mut Commands| {
                 if let Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
@@ -130,6 +149,7 @@ pub fn load(
                 let mat = material(tex, &mut images, &mut materials);
                 let child = commands.spawn((FacePart, Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::from_translation(at), RenderLayers::layer(LAYER))).id();
                 commands.entity(root).add_child(child);
+                child
             };
             if let Some(f) = find(4, n) {
                 match mgs2_formats::evm::parse(&f.data) {
@@ -137,9 +157,11 @@ pub fn load(
                         if head.is_none() {
                             head = m.bones.get(12).map(|b| Vec3::from(b.position) * SCALE);
                         }
-                        for (tex, mesh, _) in crate::demo::evm_meshes(&m) {
-                            add(mesh, tex, Vec3::ZERO, &mut commands);
+                        let mut parts = Vec::new();
+                        for (tex, mesh, k) in crate::demo::evm_meshes(&m) {
+                            parts.push((add(mesh, tex, Vec3::ZERO, &mut commands), k));
                         }
+                        anim.evms.push((m, parts));
                     }
                     Err(e) => warn!("codec face {n}: {e}"),
                 }
@@ -147,7 +169,8 @@ pub fn load(
                 match mgs2_formats::kms::parse(&f.data) {
                     Ok(m) => {
                         for (tex, mesh, _) in scene::model_meshes(&m) {
-                            add(mesh, tex, head.unwrap_or(Vec3::ZERO), &mut commands);
+                            let e = add(mesh, tex, head.unwrap_or(Vec3::ZERO), &mut commands);
+                            anim.attached.push(e);
                         }
                     }
                     Err(e) => warn!("codec face {n}: {e}"),
@@ -163,7 +186,7 @@ pub fn load(
         let target = PLACE[i] + head + Vec3::new(0.0, 0.0, 0.03);
         let eye = target + Vec3::new(0.0, 0.02, 0.85);
         let image = images.add(Image::new_target_texture(SIZE, SIZE, TextureFormat::Rgba8UnormSrgb, None));
-        commands.spawn((
+        anim.camera = Some(commands.spawn((
             FaceCamera,
             Camera3d::default(),
             Camera { order: -2 - i as isize, clear_color: ClearColorConfig::Custom(Color::srgb(0.02, 0.12, 0.06)), is_active: false, ..default() },
@@ -171,15 +194,17 @@ pub fn load(
             Projection::Perspective(PerspectiveProjection { fov: 30f32.to_radians(), ..default() }),
             Transform::from_translation(eye).looking_at(target, Vec3::Y),
             RenderLayers::layer(LAYER),
-        ));
+        )).id());
         for (p, mut node) in &mut portraits {
             if p.0 == i {
                 node.image = image.clone();
             }
         }
         debug!("codec face {:06x}: {:?}..{:?}", who, lo / SCALE, hi / SCALE);
+        heads.push(anim);
     }
     info!("codec faces {name}: {built} heads");
+    commands.insert_resource(Faces { heads });
 }
 
 /// Shows the portraits (and runs their cameras) while a call is open, the
@@ -203,5 +228,65 @@ pub fn show(
         }
         let lit = speaker == Some(HEADS[p.0].0);
         node.color = if lit { Color::WHITE } else { Color::srgb(0.45, 0.5, 0.45) };
+    }
+}
+
+/// Poses the heads by their idle motions while a call is open.
+pub fn animate(
+    time: Res<Time<Real>>,
+    state: Res<CodecState>,
+    faces: Option<Res<Faces>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mesh3d: Query<&Mesh3d>,
+    mut tfs: Query<&mut Transform>,
+) {
+    let Some(faces) = faces else { return };
+    if state.call.is_none() {
+        return;
+    }
+    let t = time.elapsed_secs() * 60.0;
+    for head in &faces.heads {
+        let Some(motion) = &head.motion else { continue };
+        let frame = t % motion.length.max(1) as f32;
+        let mut head_bone = None;
+        for (model, parts) in &head.evms {
+            let rots: Vec<Quat> = (0..model.bones.len()).map(|j| motion.rotation(j, frame).map(|q| Quat::from_xyzw(q[0], q[1], q[2], q[3]).normalize().conjugate()).unwrap_or(Quat::IDENTITY)).collect();
+            let mats = crate::demo::evm_pose(model, &rots, None);
+            if head_bone.is_none() {
+                head_bone = mats.get(12).copied();
+            }
+            for &(e, k) in parts {
+                let (Ok(m3), Some(src)) = (mesh3d.get(e), model.meshes.get(k)) else { continue };
+                let Some(mut mesh) = meshes.get_mut(&m3.0) else { continue };
+                let mut pos: Vec<[f32; 3]> = Vec::with_capacity(src.positions.len());
+                for (i, p) in src.positions.iter().enumerate() {
+                    let v = Vec3::from(*p);
+                    let mut acc = Vec3::ZERO;
+                    for &(bone, w) in &src.skin[i] {
+                        if w <= 0.0 {
+                            continue;
+                        }
+                        let (Some(m), Some(b)) = (mats.get(usize::from(bone)), model.bones.get(usize::from(bone))) else { continue };
+                        acc += m.transform_point3(v - Vec3::from(b.position)) * w;
+                    }
+                    pos.push((acc * SCALE).into());
+                }
+                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+            }
+        }
+        if let Some(m) = head_bone {
+            let (_, rot, tr) = m.to_scale_rotation_translation();
+            // The camera follows the head as the idle motion moves it.
+            if let Some(mut tf) = head.camera.and_then(|c| tfs.get_mut(c).ok()) {
+                let target = head.place + tr * SCALE + Vec3::new(0.0, 0.0, 0.03);
+                *tf = Transform::from_translation(target + Vec3::new(0.0, 0.02, 0.85)).looking_at(target, Vec3::Y);
+            }
+            for &e in &head.attached {
+                if let Ok(mut tf) = tfs.get_mut(e) {
+                    tf.translation = tr * SCALE;
+                    tf.rotation = rot;
+                }
+            }
+        }
     }
 }
