@@ -401,4 +401,10 @@ sound-bank pages.
   joint data (offsets from the end of the entries). Actors are speaker ids
   (`0x28dce6` Snake, `0x4ab569` Otacon) with 32 joints = the heads' face
   bones 21-52, and `id + 1` (21 joints) the body bones 0-20; keys every 5
-  ticks (`mgs2_formats::demo::face_stream`).
+  ticks (`mgs2_formats::demo::face_stream`).- DEMO type-6 records: `+0x10` constructor id, looked up in the cutscene
+  resident's command table (entries with high byte 1, e.g. d05t: 0x1000000
+  fog, 0x1000006 ambient colour, 0x1000007 light direction + colour,
+  0x1000008 / 0x1000003 screen fade (`d_fade_io_prog.c`: RGBA from -> to,
+  alpha 0x80 opaque, over the difference of two 60 Hz frame stamps),
+  0x10fff00.. demo control); `+0x14` 0 runs it once with the parameters
+  from `+0x20`, 1 creates an actor.

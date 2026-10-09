@@ -62,6 +62,26 @@ pub struct Model {
     pub shown: Vec<(u32, bool)>,
 }
 
+impl Demo {
+    /// The fade colour on screen at `frame` (ticks), RGBA 0..1.
+    pub fn fade_at(&self, frame: f32) -> [f32; 4] {
+        let eval = |f: &Fade, start: [f32; 4], at: f32| -> [f32; 4] {
+            let t = if f.frames > 0.0 { ((at - f.frame as f32) / (f.frames * 5.0)).clamp(0.0, 1.0) } else { 1.0 };
+            std::array::from_fn(|i| start[i] + (f.to[i] - start[i]) * t)
+        };
+        // Each fade starts from its own colour or the one on screen when it
+        // begins.
+        let mut last: Option<(&Fade, [f32; 4])> = None;
+        for f in self.fades.iter().filter(|f| f.frame as f32 <= frame) {
+            let start = f.from.unwrap_or_else(|| last.map_or([0.0; 4], |(p, s)| eval(p, s, f.frame as f32)));
+            last = Some((f, start));
+        }
+        let cur = last.map_or([0.0; 4], |(f, s)| eval(f, s, frame));
+        let n = |v: f32, max: f32| (v / max).clamp(0.0, 1.0);
+        [n(cur[0], 255.0), n(cur[1], 255.0), n(cur[2], 255.0), n(cur[3], 128.0)]
+    }
+}
+
 impl Model {
     pub fn visible(&self, frame: f32) -> bool {
         (self.from as f32) <= frame
@@ -88,6 +108,18 @@ pub struct Demo {
     pub models: Vec<Model>,
     pub actors: BTreeMap<u32, Vec<ActorKey>>,
     pub subtitles: Vec<Line>,
+    pub fades: Vec<Fade>,
+}
+
+/// A screen fade (type-6 effects `0x1000003` / `0x1000008`, the resident's
+/// `d_fade_io_prog.c`): from `from` (or the colour on screen) to `to` over
+/// `frames` 60 Hz frames. Colours are RGBA, alpha 0x80 = opaque.
+#[derive(Clone, Copy, Debug)]
+pub struct Fade {
+    pub frame: u32,
+    pub from: Option<[f32; 4]>,
+    pub to: [f32; 4],
+    pub frames: f32,
 }
 
 fn u16_at(b: &[u8], o: usize) -> Option<u16> {
@@ -189,9 +221,23 @@ fn packet(chunk: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, A
                 }
             }
             7 => actors(r, frame, demo, state),
+            6 => effect(r, frame, demo),
             _ => {}
         }
         p += sz;
+    }
+}
+
+/// Type 6: an effect constructor (`+0x10` id in the resident's command
+/// table, `+0x14` 0 = one-shot, parameters from `+0x20`). Only the fades are
+/// kept; durations are the difference of two frame stamps.
+fn effect(r: &[u8], frame: u32, demo: &mut Demo) {
+    let p = |i: usize| u32_at(r, 0x20 + i * 4).map_or(0.0, |v| v as i32 as f32);
+    let rgba = |i: usize| [p(i), p(i + 1), p(i + 2), p(i + 3)];
+    match u32_at(r, 0x10) {
+        Some(0x0100_0003) => demo.fades.push(Fade { frame, from: None, to: rgba(0), frames: p(4) - p(5) }),
+        Some(0x0100_0008) => demo.fades.push(Fade { frame, from: Some(rgba(0)), to: rgba(4), frames: p(8) - p(9) }),
+        _ => {}
     }
 }
 

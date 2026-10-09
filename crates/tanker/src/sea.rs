@@ -133,8 +133,9 @@ pub fn setup(
         mat.cull_mode = None;
         mat.double_sided = true;
         commands.spawn((
+            // Not a LevelEntity: deck cutscenes share the stage's coordinates and
+            // keep the sea in view.
             SeaLayer(k),
-            crate::LevelEntity,
             Mesh3d(meshes.add(grid())),
             MeshMaterial3d(materials.add(mat)),
             Transform::from_xyz(0.0, (spec.height + k as f32 * 20.0) * SCALE, 0.0),

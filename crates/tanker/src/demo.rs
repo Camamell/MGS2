@@ -134,6 +134,9 @@ pub fn load(iso: &Path, name: &str, script: &Gcx, stage: Option<StageData>) -> C
                 audio.push(mgs2_formats::vox::decode_clip(&bytes).map(|c| c.wav()).unwrap_or_default());
                 lines.extend(d.subtitles.iter().map(|x| Line { start: x.start + offset, end: x.end + offset, text: x.text.clone() }));
                 let len = d.length.max(d.subtitles.iter().map(|x| x.end).max().unwrap_or(0));
+                if !d.fades.is_empty() {
+                    info!("demo {id:#x} at {:.1} s: fades at {:?} s", offset as f32 / TICKS, d.fades.iter().map(|f| (offset + f.frame) as f32 / TICKS).collect::<Vec<_>>());
+                }
                 demos.push((offset, d));
                 offset += len + 150;
             }
@@ -166,7 +169,18 @@ pub fn load(iso: &Path, name: &str, script: &Gcx, stage: Option<StageData>) -> C
 #[derive(Component)]
 pub struct CutsceneScreen;
 
+/// The demos' screen fades (`mgs2_formats::demo::Fade`), under the subtitles.
+#[derive(Component)]
+pub struct CutsceneFade;
+
 pub fn setup_screen(mut commands: Commands) {
+    commands.spawn((
+        CutsceneFade,
+        Node { position_type: PositionType::Absolute, left: px(0), right: px(0), top: px(0), bottom: px(0), ..default() },
+        BackgroundColor(Color::NONE),
+        GlobalZIndex(4),
+        Visibility::Hidden,
+    ));
     commands.spawn((
         CutsceneScreen,
         Text::new(""),
@@ -315,6 +329,25 @@ pub fn sound(
         settings.start_position = Some(std::time::Duration::from_secs_f32(f / TICKS));
     }
     commands.spawn((AudioPlayer(handle), settings, DemoAudio));
+}
+
+/// Colours the fade overlay from the playing demo's fades.
+pub fn fade(c: Res<Cutscene>, mut q: Query<(&mut BackgroundColor, &mut Visibility), With<CutsceneFade>>) {
+    let Ok((mut bg, mut v)) = q.single_mut() else { return };
+    let colour = if c.active() && c.stage.is_some() { current(&c).map(|(i, f)| c.demos[i].1.fade_at(f)) } else { None };
+    match colour.filter(|k| k[3] > 0.0) {
+        Some([r, g, b, a]) => {
+            *bg = BackgroundColor(Color::srgba(r, g, b, a));
+            if *v != Visibility::Inherited {
+                *v = Visibility::Inherited;
+            }
+        }
+        None => {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+            }
+        }
+    }
 }
 
 /// The demo whose time span holds the cutscene frame, and the frame in it.

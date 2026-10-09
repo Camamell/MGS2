@@ -804,7 +804,7 @@ fn main() -> Result<()> {
             .run_if(demo::idle),
     );
     app.add_systems(Update, (codec::input, codec::screen, codec::voice).chain().run_if(demo::idle));
-    app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound).chain().after(player::follow_camera));
+    app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound, demo::fade).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
     app.add_systems(Startup, codec_face::setup_portraits).add_systems(Update, (codec_face::load, codec_face::show, codec_face::animate.after(codec_face::load)));
     if let [x, y, z, yaw, pitch] = cli.look[..] {
