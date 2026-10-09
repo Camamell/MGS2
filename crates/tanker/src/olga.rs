@@ -99,6 +99,8 @@ pub struct Olga {
     /// Seconds since she went down; the callback runs once.
     pub down_for: f32,
     pub reported: bool,
+    /// Reload sounds played so far (0..2).
+    reload_sounds: u8,
 }
 
 impl Olga {
@@ -118,6 +120,7 @@ impl Olga {
             unknown: Vec::new(),
             traced: 0,
             on_down,
+            reload_sounds: 0,
             down_for: 0.0,
             reported: false,
         }
@@ -343,9 +346,20 @@ fn step(o: &mut Olga, b: &mut Body, f: u32, cx: &mut Ctx) -> bool {
         // Reload.
         0x0026_2B00 => {
             b.play_once(12);
+            o.reload_sounds = 0;
             next(o)
         }
         0x0026_2810 => {
+            // FUN_00262810: magazine out (0x2f) at motion time 0x14f, in (9)
+            // at 400 (the motion clock runs 5 a frame: frames 67 and 80).
+            if b.frame >= 67.0 && o.reload_sounds < 1 {
+                o.reload_sounds = 1;
+                crate::sfx::play(0x2F, Some(b.pos));
+            }
+            if b.frame >= 80.0 && o.reload_sounds < 2 {
+                o.reload_sounds = 2;
+                crate::sfx::play(9, Some(b.pos));
+            }
             if motion_done(b) {
                 o.rounds = MAGAZINE;
                 next(o)
