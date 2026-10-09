@@ -123,6 +123,17 @@ impl Cutscene {
         Some(crate::fog::FogSpec { color: k.color, near: k.near, far: k.far })
     }
 
+    /// Lightning bolts of the playing demo with frames in (after, upto].
+    pub fn thunders(&self, after: f32, upto: f32) -> Vec<[f32; 2]> {
+        let Some((i, _)) = current(self) else { return Vec::new() };
+        self.demos[i].1.thunders.iter().filter(|(f, _)| after < *f as f32 && *f as f32 <= upto).map(|t| t.1).collect()
+    }
+
+    /// The playing demo's index and frame.
+    pub fn position(&self) -> Option<(usize, f32)> {
+        current(self)
+    }
+
     /// The playing demo's lighting at the current frame.
     pub fn lighting(&self) -> Option<Lighting> {
         let (i, f) = current(self)?;

@@ -842,6 +842,7 @@ fn main() -> Result<()> {
     app.add_plugins(headmark::plugin);
     app.add_plugins(fpv::plugin);
     app.add_plugins(thunder::plugin);
+    app.add_plugins(thunder::bolt_plugin);
     // MGS2_FPS=1: log frame rate and time every second.
     if std::env::var_os("MGS2_FPS").is_some() {
         app.add_plugins((bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(), bevy::diagnostic::LogDiagnosticsPlugin::default()));

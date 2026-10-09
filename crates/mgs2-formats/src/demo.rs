@@ -115,6 +115,9 @@ pub struct Demo {
     /// The light (type-6 `0x1000007`): unit direction and colour (`FUN_00125ee0`,
     /// `FUN_00125f68`). Colours count 128 as 1.0.
     pub lights: Vec<DemoLight>,
+    /// Lightning bolts (type-6 `0x1002000`, `d_thunder.c`): frame and the
+    /// bolt's start on screen (x, y).
+    pub thunders: Vec<(u32, [f32; 2])>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -262,6 +265,10 @@ fn effect(r: &[u8], frame: u32, demo: &mut Demo) {
             let c = |i: usize| u32_at(r, 0x20 + i * 4).unwrap_or(0).min(255) as u8;
             let fl = |i: usize| f32_at(r, 0x20 + i * 4).unwrap_or(0.0);
             demo.fogs.push(DemoFog { frame, color: [c(0), c(1), c(2)], near: fl(4), far: fl(5) });
+        }
+        Some(0x0100_2000) => {
+            let fl = |i: usize| f32_at(r, 0x20 + i * 4).unwrap_or(0.0);
+            demo.thunders.push((frame, [fl(0), fl(1)]));
         }
         Some(0x0100_0006) => demo.ambients.push((frame, [p(0), p(1), p(2)])),
         Some(0x0100_0007) => {

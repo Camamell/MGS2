@@ -127,8 +127,9 @@ What works:
 - Each stage's fog (`chara #a53aa7`: colour, near and far), the distant
   skyline exempt.
 - Lightning on the open decks (`chara #89af5e`): lit clouds flicker in the
-  sky and the thunder follows, at the game's odds and timings (the bolt itself
-  is not drawn; `MGS2_THUNDER=n` for a strike every ~n frames).
+  sky, a branching bolt cracks (also where the cutscenes call for one) and the
+  thunder follows, at the game's odds and timings (`MGS2_THUNDER=n` for a
+  strike every ~n frames).
 - Rain on the open decks where the stage script sets it up (`rain.c`:
   streaks around the camera, not where its boxes exclude it).
 - The stage scripts' own cameras (follow-in-box and fixed, switched by traps)
