@@ -94,6 +94,9 @@ fn fly(
                 Some(t) => {
                     g.pos = g.pos.lerp(next, t * 0.95);
                     // A floor stops it; a wall knocks it back.
+                    // Bounce sound: 0x2b, the clatter of a dropped object
+                    // (FUN_002b7b40).
+                    crate::sfx::play(0x2B, Some(g.pos));
                     if g.vel.y < 0.0 && t > 0.0 {
                         g.vel = Vec3::new(g.vel.x * 0.3, -g.vel.y * 0.2, g.vel.z * 0.3);
                         if g.vel.length() < 800.0 {
