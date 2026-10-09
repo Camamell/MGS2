@@ -115,6 +115,13 @@ impl Cutscene {
     pub fn active(&self) -> bool {
         self.length > 0.0
     }
+
+    /// The playing demo's fog at the current frame (`None`: no fog).
+    pub fn fog(&self) -> Option<crate::fog::FogSpec> {
+        let (i, f) = current(self)?;
+        let k = self.demos[i].1.fogs.iter().rev().find(|k| k.frame as f32 <= f)?;
+        Some(crate::fog::FogSpec { color: k.color, near: k.near, far: k.far })
+    }
 }
 
 pub fn idle(c: Res<Cutscene>) -> bool {

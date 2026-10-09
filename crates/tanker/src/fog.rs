@@ -29,14 +29,23 @@ pub fn from_spawn(s: &Spawn) -> Option<FogSpec> {
     })
 }
 
-/// Puts the stage's fog on the camera when the stage changes.
-pub fn apply(mut commands: Commands, game: Res<crate::Game>, cams: Query<Entity, With<crate::player::FollowCam>>, mut stage: Local<String>) {
-    if *stage == game.data.name {
+/// Puts the fog on the camera: the stage's, or during a cutscene the demo's
+/// own (type-6 effect 0x1000000; none if the demo sets none).
+pub fn apply(
+    mut commands: Commands,
+    game: Res<crate::Game>,
+    cutscene: Res<crate::demo::Cutscene>,
+    cams: Query<Entity, With<crate::player::FollowCam>>,
+    mut shown: Local<Option<Option<(u32, [u8; 3], i32, i32)>>>,
+) {
+    let Ok(cam) = cams.single() else { return };
+    let want = if cutscene.active() { cutscene.fog() } else { game.fog };
+    let key = want.map(|f| (0, f.color, f.near as i32, f.far as i32));
+    if *shown == Some(key) {
         return;
     }
-    let Ok(cam) = cams.single() else { return };
-    *stage = game.data.name.clone();
-    match game.fog {
+    *shown = Some(key);
+    match want {
         Some(f) => {
             let [r, g, b] = f.color;
             commands.entity(cam).insert(DistanceFog {
@@ -50,7 +59,6 @@ pub fn apply(mut commands: Commands, game: Res<crate::Game>, cams: Query<Entity,
         }
     }
 }
-
 /// Models drawn without fog (the skyline far beyond the fog's end).
 #[derive(Component)]
 pub struct NoFog;

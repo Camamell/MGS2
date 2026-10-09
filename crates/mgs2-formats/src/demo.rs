@@ -109,6 +109,17 @@ pub struct Demo {
     pub actors: BTreeMap<u32, Vec<ActorKey>>,
     pub subtitles: Vec<Line>,
     pub fades: Vec<Fade>,
+    pub fogs: Vec<DemoFog>,
+}
+
+/// Fog from a type-6 effect `0x1000000` (`FUN_002a24c8`): RGB, near and far
+/// (f32 mm) from `frame` on.
+#[derive(Clone, Copy, Debug)]
+pub struct DemoFog {
+    pub frame: u32,
+    pub color: [u8; 3],
+    pub near: f32,
+    pub far: f32,
 }
 
 /// A screen fade (type-6 effects `0x1000003` / `0x1000008`, the resident's
@@ -235,6 +246,11 @@ fn effect(r: &[u8], frame: u32, demo: &mut Demo) {
     let p = |i: usize| u32_at(r, 0x20 + i * 4).map_or(0.0, |v| v as i32 as f32);
     let rgba = |i: usize| [p(i), p(i + 1), p(i + 2), p(i + 3)];
     match u32_at(r, 0x10) {
+        Some(0x0100_0000) => {
+            let c = |i: usize| u32_at(r, 0x20 + i * 4).unwrap_or(0).min(255) as u8;
+            let fl = |i: usize| f32_at(r, 0x20 + i * 4).unwrap_or(0.0);
+            demo.fogs.push(DemoFog { frame, color: [c(0), c(1), c(2)], near: fl(4), far: fl(5) });
+        }
         Some(0x0100_0003) => demo.fades.push(Fade { frame, from: None, to: rgba(0), frames: p(4) - p(5) }),
         Some(0x0100_0008) => demo.fades.push(Fade { frame, from: Some(rgba(0)), to: rgba(4), frames: p(8) - p(9) }),
         _ => {}
