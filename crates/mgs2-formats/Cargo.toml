@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 flate2 = "1"
 thiserror = "2"
+
+[dev-dependencies]
+png = "0.17"

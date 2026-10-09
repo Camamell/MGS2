@@ -6,6 +6,11 @@ fn main() {
         let data = std::fs::read(&path).expect("read");
         match mgs2_formats::evm::parse(&data) {
             Ok(m) => {
+                if std::env::var_os("EVM_BONES").is_some() {
+                    for (i, b) in m.bones.iter().enumerate() {
+                        println!("  bone {i:2} parent {:3} offset {:?} position {:?}", b.parent, b.offset, b.position);
+                    }
+                }
                 let verts: usize = m.meshes.iter().map(|x| x.positions.len()).sum();
                 let tris: usize = m.meshes.iter().map(|x| x.indices.len() / 3).sum();
                 let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);

@@ -3545,6 +3545,7 @@ name = "mgs2-formats"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "png 0.17.16",
  "thiserror 2.0.21",
 ]
 

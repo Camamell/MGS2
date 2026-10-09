@@ -381,3 +381,17 @@ sound-bank pages.
   line (MOVIE 0xab08) plays. `Abit:0xb63.5` is only set by w04b's
   `#94ea87`; some engine-side state behind this is still unknown.
 - `GCL_TRACE=1` makes the port log every proc call.
+## FACE.DAT (Codec faces)
+
+- Header sector: `u32 stamp, u16 1, u16 1, u16 count`, entries from +16 of
+  `char name[8], u32 sector`: `node photo capture mobile` (menus) and one
+  per stage (`f00a` for w00a ... `f06a`). Each entry is a plaintext
+  stage-style page list (`u32 n`, pairs `a, b`; a `0x7F000002` page with
+  its size, then `type << 24 | hash` files at offsets, listed by type).
+- Contents (names from JoyDict): `sna_radio_mh_mt.evm/.tri` (Snake's
+  head), `otc_radio_mh_mt.evm`, `otc_hair_mh.evm`, `otc_glasses_mt.kms`,
+  `otc_dummy.kms`, `cdc_snake/cdc_otacon.mar/.sar` (motions),
+  `lip_*_nom_eye_toji.rmt`, `save_load.o2d`, `tnkicon.ric`. The heads use
+  the standard skeleton: bone 12 is the head (Otacon's at y 578 mm),
+  bones 21+ the face; kms parts hang from bone 12. `mgs2_formats::face`
+  reads an entry; `examples/face_dump.rs` lists them and writes textures.

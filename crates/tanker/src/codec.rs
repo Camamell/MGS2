@@ -20,7 +20,7 @@ use crate::gcl::{Banks, Vm};
 #[derive(Resource)]
 pub struct CodecData {
     data: Vec<u8>,
-    iso: std::path::PathBuf,
+    pub iso: std::path::PathBuf,
 }
 
 impl CodecData {

@@ -210,7 +210,7 @@ pub struct DemoActor {
 pub struct EvmPart(usize);
 
 /// Bevy meshes of an evm in bind pose (metres).
-fn evm_meshes(m: &mgs2_formats::evm::Model) -> Vec<(u32, Mesh, usize)> {
+pub fn evm_meshes(m: &mgs2_formats::evm::Model) -> Vec<(u32, Mesh, usize)> {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     m.meshes

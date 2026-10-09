@@ -41,7 +41,7 @@ pub fn alpha_mode(t: &Texture) -> AlphaMode {
     }
 }
 
-fn image(t: &Texture) -> Image {
+pub fn image(t: &Texture) -> Image {
     let mut img = Image::new(
         Extent3d { width: t.width, height: t.height, depth_or_array_layers: 1 },
         TextureDimension::D2,
