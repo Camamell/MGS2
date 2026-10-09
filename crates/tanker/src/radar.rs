@@ -105,6 +105,7 @@ fn draw(
     phase: Option<Res<Phase>>,
     cutscene: Res<crate::demo::Cutscene>,
     codec: Res<crate::codec::CodecState>,
+    jam: Res<crate::grenade::Jam>,
     snake: Query<&Body, With<Player>>,
     guards: Query<(&Guard, &Body), Without<Player>>,
     bosses: Query<&Body, (With<crate::olga::Olga>, Without<Player>)>,
@@ -128,9 +129,11 @@ fn draw(
     }
     let (Some(turn), Some(snake), true) = (game.radar, snake, shown) else { return };
     let kind = phase.map_or(PhaseKind::Infiltration, |p| p.kind);
-    let jammed = matches!(kind, PhaseKind::Alert | PhaseKind::Evasion);
+    let chaff = jam.0 > 0.0;
+    let jammed = chaff || matches!(kind, PhaseKind::Alert | PhaseKind::Evasion);
     if let Ok(mut t) = label.single_mut() {
         let want = match kind {
+            _ if chaff => "JAMMING",
             PhaseKind::Alert => "ALERT",
             PhaseKind::Evasion => "EVASION",
             _ => "",
