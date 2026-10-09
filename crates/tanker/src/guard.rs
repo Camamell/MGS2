@@ -998,7 +998,7 @@ pub fn draw(game: Res<Game>, guards: Query<(&Guard, &Body)>, mut gizmos: Gizmos)
                 }
             }
         }
-        if !matches!(g.state, State::Patrol | State::Wait(_) | State::Return) {
+        if game.show_vision && !matches!(g.state, State::Patrol | State::Wait(_) | State::Return) {
             gizmos.sphere(Isometry3d::from_translation(eye + Vec3::Y * 0.6), 0.12, colour);
         }
         if game.show_vision {

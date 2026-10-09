@@ -20,6 +20,7 @@ mod timer;
 mod fog;
 mod gcl;
 mod guard;
+mod headmark;
 mod items;
 mod nav;
 mod olga;
@@ -836,6 +837,7 @@ fn main() -> Result<()> {
     app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound, demo::fade).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
     app.add_plugins(radar::plugin);
+    app.add_plugins(headmark::plugin);
     app.add_plugins(thunder::plugin);
     // MGS2_FPS=1: log frame rate and time every second.
     if std::env::var_os("MGS2_FPS").is_some() {

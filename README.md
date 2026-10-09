@@ -115,6 +115,8 @@ What works:
   the guards with their vision cones, turned by the actor's `-d`; in Alert
   and Evasion it shows the phase instead (a redrawn stand-in for the game's
   textured radar).
+- Marks over the guards' heads from the game's sprites: "!" on discovery,
+  "?" on a noise, a rising "Z" while asleep (tints and timing assumed).
 - Character shadows: Snake's own shadow model (`sna_shadow`), others their
   body, posed with the body and flattened onto the floor (the game draws a
   shadow volume; here straight down, assumed).
