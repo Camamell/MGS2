@@ -25,6 +25,7 @@ mod nav;
 mod olga;
 mod photo;
 mod player;
+mod radar;
 mod rain;
 mod script_cam;
 
@@ -196,6 +197,8 @@ pub struct Game {
     pub timer: Option<timer::Timer>,
     /// The stage's fog (`chara #a53aa7`).
     pub fog: Option<fog::FogSpec>,
+    /// The radar's turn (radians), when the stage creates one.
+    pub radar: Option<f32>,
     /// The script ended the game (`load ... -g`).
     pub game_over: bool,
     /// The variables as the stage started (a continue goes back to them).
@@ -489,6 +492,7 @@ fn prepare(
     let mut rain_spec = None;
     let mut holds_timer = None;
     let mut fog_spec = None;
+    let mut radar_turn = None;
     let mut crowd_procs = (Vec::new(), (2500.0, 7000.0));
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
@@ -533,6 +537,7 @@ fn prepare(
         rain_spec = vm.spawns.iter().find(|s| s.kind == rain::RAIN_ACTOR).and_then(rain::from_spawn);
         holds_timer = vm.spawns.iter().find(|s| s.kind == timer::TIMER_ACTOR).and_then(timer::Timer::from_spawn);
         fog_spec = vm.spawns.iter().filter(|s| s.kind == fog::FOG_ACTOR).find_map(fog::from_spawn);
+        radar_turn = vm.spawns.iter().find(|s| s.kind == radar::RADAR_ACTOR).map(radar::angle);
         let manager = vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR);
         phase = Phase::from_manager(manager);
         on_alert = manager.and_then(|s| match s.opt(b'a')?.first()? {
@@ -657,6 +662,7 @@ fn prepare(
         rain: rain_spec,
         timer: holds_timer,
         fog: fog_spec,
+        radar: radar_turn,
         game_over: false,
         start_banks: gcl::Banks::default(),
         crowd_alarm: false,
@@ -823,6 +829,7 @@ fn main() -> Result<()> {
     app.add_systems(Update, (codec::input, codec::screen, codec::voice).chain().run_if(demo::idle));
     app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound, demo::fade).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
+    app.add_plugins(radar::plugin);
     // MGS2_FPS=1: log frame rate and time every second.
     if std::env::var_os("MGS2_FPS").is_some() {
         app.add_plugins((bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(), bevy::diagnostic::LogDiagnosticsPlugin::default()));
@@ -912,7 +919,8 @@ fn setup(mut commands: Commands, start: Res<Start>) {
         Hud,
         Text::new(""),
         TextFont { font_size: bevy::text::FontSize::Px(14.0), ..default() },
-        Node { position_type: PositionType::Absolute, top: px(8), left: px(8), ..default() },
+        // Wraps short of the radar in the top-right corner.
+        Node { position_type: PositionType::Absolute, top: px(8), left: px(8), right: px(250), ..default() },
     ));
 }
 

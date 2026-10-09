@@ -111,6 +111,10 @@ What works:
   ambient and a directional light plus point, spot and strip lights and
   shadow spheres, per vertex, on the map, props and (assumed the same way)
   the characters (`mgs2_formats::lt2`; `MGS2_NO_LT2=1` to compare unlit).
+- The radar (`radar.c`, top right): the stage's walls around Snake's height,
+  the guards with their vision cones, turned by the actor's `-d`; in Alert
+  and Evasion it shows the phase instead (a redrawn stand-in for the game's
+  textured radar).
 - Character shadows: Snake's own shadow model (`sna_shadow`), others their
   body, posed with the body and flattened onto the floor (the game draws a
   shadow volume; here straight down, assumed).
