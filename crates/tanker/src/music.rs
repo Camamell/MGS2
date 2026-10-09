@@ -141,17 +141,27 @@ pub struct Sound {
     managed: bool,
     control: Option<Arc<Control>>,
     faders: Vec<Fader>,
+    /// Song and level the script asked for (`0x0100000n`, `0xff00010n`),
+    /// for stages without the music manager.
+    script_song: (u32, u8),
 }
 
 impl Sound {
     /// Plays sound effect `id` at full volume, centred.
-    pub fn effect(&self, id: u32) {
+    pub fn effect(&mut self, id: u32) {
         self.command(0x20 << 18 | 0x3F << 12 | id);
     }
 
-    /// A raw driver command (`#f2eedc -c`): effects (high byte 0) play; the
-    /// rest (fades, song control) is not modelled.
-    pub fn command(&self, cmd: u32) {
+    /// A raw driver command (`#f2eedc -c`, the sound relay): effects (high
+    /// byte 0) play, songs and levels are kept for unmanaged stages; fades
+    /// and the rest are not modelled.
+    pub fn command(&mut self, cmd: u32) {
+        match cmd {
+            0x0100_0001..=0x0100_000F => self.script_song.0 = cmd & 0xF,
+            0x01FF_FFFF => self.script_song.0 = 0,
+            0xFF00_0100..=0xFF00_0108 => self.script_song.1 = (cmd & 0xF) as u8,
+            _ => {}
+        }
         if cmd >> 24 == 0
             && cmd & 0x7FF != 0
             && let Some(c) = &self.control
@@ -183,10 +193,11 @@ fn update(
         sound.control = None;
         sound.managed = game.data.script.as_ref().is_some_and(has_manager);
         sound.faders = game.data.script.as_ref().map(faders).unwrap_or_default();
+        sound.script_song = (0, 0);
         if let Some(bytes) = game.data.sound.as_ref() {
             match Pack::with_resident(game.data.resident_sound.as_deref(), bytes) {
                 Some(pack) => {
-                    info!("sound: {} has {} songs (music {})", game.data.name, pack.song_count(), if sound.managed { "on" } else { "off" });
+                    info!("sound: {} has {} songs ({})", game.data.name, pack.song_count(), if sound.managed { "bgmanage" } else { "script" });
                     let control = Arc::new(Control::default());
                     let handle = assets.add(SdMusic { pack: Arc::new(pack), control: control.clone() });
                     commands.spawn((AudioPlayer(handle), PlaybackSettings::LOOP.with_volume(bevy::audio::Volume::Linear(0.7)), MusicPlayer));
@@ -215,8 +226,10 @@ fn update(
     }
     *last = Some(kind);
     let Some(control) = &sound.control else { return };
-    let (song, level) = if cutscene.active() || !sound.managed {
+    let (song, level) = if cutscene.active() {
         (0, 0)
+    } else if !sound.managed {
+        sound.script_song
     } else {
         match kind {
             PhaseKind::Infiltration => (5, 1),

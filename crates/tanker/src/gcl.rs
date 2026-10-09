@@ -119,6 +119,8 @@ const SPEECH: u32 = 0x7AA13A;
 /// `#f2eedc -c <command>`: a raw sound driver command (sound effects
 /// when the high byte is 0).
 const SOUND: u32 = 0xF2EEDC;
+/// The sound relay actor's name (`mesg #9b5b7f <target> <command>`).
+const SOUND_RELAY: u32 = 0x9B5B7F;
 /// `#89a17e { ... }` in Codec records: repeats its block while the block
 /// returns non-zero.
 const CODEC_LOOP: u32 = 0x89A17E;
@@ -455,6 +457,13 @@ impl<'a> Vm<'a> {
                 }
             // Other commands' results are not modelled; read as 0.
             self.last = 0;
+            None
+        } else if is("mesg") && matches!(a.first(), Some(Value::Name(h)) if *h & 0x00FF_FFFF == SOUND_RELAY) {
+            // `mesg #9b5b7f <target> <command>`: the sound relay actor
+            // (`chara #c88afa #9b5b7f`) passes the command to the driver.
+            if let Some(c) = a.get(2).and_then(|v| self.value(v, args).int()) {
+                self.codec.push(CodecReq::Sound(c as u32));
+            }
             None
         } else if self.codec_mode && name == CODEC_LINE {
             // `#3b91eb <speaker> <?> -m str[n]`: one line of dialogue.
