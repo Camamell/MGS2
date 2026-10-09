@@ -27,6 +27,7 @@ mod photo;
 mod player;
 mod radar;
 mod rain;
+mod thunder;
 mod script_cam;
 
 use std::collections::HashMap;
@@ -199,6 +200,8 @@ pub struct Game {
     pub fog: Option<fog::FogSpec>,
     /// The radar's turn (radians), when the stage creates one.
     pub radar: Option<f32>,
+    /// Lightning, on the open decks.
+    pub thunder: Option<thunder::ThunderSpec>,
     /// The script ended the game (`load ... -g`).
     pub game_over: bool,
     /// The variables as the stage started (a continue goes back to them).
@@ -493,6 +496,7 @@ fn prepare(
     let mut holds_timer = None;
     let mut fog_spec = None;
     let mut radar_turn = None;
+    let mut thunder_spec = None;
     let mut crowd_procs = (Vec::new(), (2500.0, 7000.0));
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
@@ -538,6 +542,7 @@ fn prepare(
         holds_timer = vm.spawns.iter().find(|s| s.kind == timer::TIMER_ACTOR).and_then(timer::Timer::from_spawn);
         fog_spec = vm.spawns.iter().filter(|s| s.kind == fog::FOG_ACTOR).find_map(fog::from_spawn);
         radar_turn = vm.spawns.iter().find(|s| s.kind == radar::RADAR_ACTOR).map(radar::angle);
+        thunder_spec = vm.spawns.iter().find(|s| s.kind == thunder::THUNDER_ACTOR).map(thunder::from_spawn);
         let manager = vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR);
         phase = Phase::from_manager(manager);
         on_alert = manager.and_then(|s| match s.opt(b'a')?.first()? {
@@ -663,6 +668,7 @@ fn prepare(
         timer: holds_timer,
         fog: fog_spec,
         radar: radar_turn,
+        thunder: thunder_spec,
         game_over: false,
         start_banks: gcl::Banks::default(),
         crowd_alarm: false,
@@ -830,6 +836,7 @@ fn main() -> Result<()> {
     app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound, demo::fade).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
     app.add_plugins(radar::plugin);
+    app.add_plugins(thunder::plugin);
     // MGS2_FPS=1: log frame rate and time every second.
     if std::env::var_os("MGS2_FPS").is_some() {
         app.add_plugins((bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(), bevy::diagnostic::LogDiagnosticsPlugin::default()));
