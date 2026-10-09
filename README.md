@@ -63,6 +63,7 @@ too.
 | V | punch (three in a row knock a guard out) |
 | R | equip / unequip a ration (revives Snake at zero life) |
 | X (hold) | first-person view: A/D turn, W/S look up / down |
+| B | put on / take off the cardboard box (once Snake has one): guards ignore it while it keeps still |
 | K | call the Codec (141.12); Space next line, Esc hang up |
 | C (holds, w04c) | digital camera: first-person view; A/D W/S aim, Q/E zoom, F take a photo |
 | Enter | continue after a game over |

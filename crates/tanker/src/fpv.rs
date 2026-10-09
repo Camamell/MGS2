@@ -63,7 +63,7 @@ fn control(
     body.yaw = fp.yaw;
 }
 
-fn view(
+pub fn view(
     fp: Res<FirstPerson>,
     mut player: Query<(&Body, &Player, &mut Visibility)>,
     mut cam: Query<&mut Transform, With<FollowCam>>,

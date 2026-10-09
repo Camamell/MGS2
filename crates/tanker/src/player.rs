@@ -93,6 +93,8 @@ pub struct Player {
     pub hang: Option<Hang>,
     /// Height (mm) a fall started from, for landing damage.
     pub fall_from: Option<f32>,
+    /// In the cardboard box.
+    pub boxed: bool,
 }
 
 /// Maximum life by difficulty, from `n_title`'s difficulty select

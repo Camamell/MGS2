@@ -610,6 +610,10 @@ pub fn think(
 
         // Sensing (FUN_00222978): perception, then the meter.
         g.level = perceive(&g, &body, snake_pos, snake_height, &game);
+        // In the box: unseen while still, only suspicious while moving.
+        if player.boxed {
+            g.level = if player.speed < 1.0 { 0 } else { g.level.min(1) };
+        }
         if g.level == 3 {
             g.last_seen = Some(snake_pos);
             phase.last_seen = Some(snake_pos);
