@@ -95,6 +95,9 @@ pub fn fly(
         if b.dart {
             for (gb, mut g) in &mut guards {
                 if let Some(h) = hits_body(b.pos, end, gb.pos, HEIGHT) {
+                    if !g.asleep() {
+                        crate::sfx::play(crate::sfx::GUARD_ASLEEP + g.voice(), Some(gb.pos));
+                    }
                     g.tranquilize(h > HEAD_HEIGHT);
                     commands.entity(e).despawn();
                     continue 'bullets;

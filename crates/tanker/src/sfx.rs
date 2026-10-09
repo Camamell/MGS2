@@ -17,6 +17,13 @@ pub const HURT: u32 = 0x19;
 pub const EMPTY: u32 = 0x04;
 pub const PICKUP: u32 = 0x16;
 pub const RAIN: u32 = 0x1D4;
+/// Guards' voices (stage effects; + the guard's voice 0..3): punched
+/// (`FUN_0024b8e8`), knocked out by the last punch (`FUN_0024d020`),
+/// darted and falling asleep (`FUN_00260320`, with the body's thud 0x36e).
+pub const GUARD_PUNCHED: u32 = 0x114;
+pub const GUARD_KNOCKED_OUT: u32 = 0x120;
+pub const GUARD_ASLEEP: u32 = 0x11C;
+pub const BODY_FALL: u32 = 0x36E;
 const STEPS: [u32; 2] = [0x07, 0x08];
 
 static QUEUE: Mutex<Vec<(u32, Option<Vec3>, f32)>> = Mutex::new(Vec::new());

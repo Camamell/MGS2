@@ -307,6 +307,12 @@ impl Guard {
         matches!(self.state, State::Patrol | State::Wait(_)) && self.node == 0
     }
 
+    /// Which of the four voices he speaks with (the game takes a per-guard
+    /// value mod 4 and adds it to each line's base id).
+    pub fn voice(&self) -> u32 {
+        (self.route % 4) as u32
+    }
+
     pub fn asleep(&self) -> bool {
         matches!(self.state, State::Asleep { .. })
     }
@@ -501,6 +507,9 @@ pub fn think(
             } else if timer < wake {
                 if timer < sleep::FALL_FRAMES {
                     body.play_once(g.anim.fall);
+                    if timer + frames >= sleep::FALL_FRAMES {
+                        crate::sfx::play(crate::sfx::BODY_FALL, Some(body.pos));
+                    }
                 } else {
                     body.play(g.anim.lie);
                 }

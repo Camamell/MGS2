@@ -131,7 +131,7 @@ pub fn punch(
             && flat.length() < PUNCH_REACH
             && flat.normalize_or_zero().angle_to(Vec2::new(fwd.x, fwd.z)).abs() < PUNCH_ARC
     });
-    let Some((e, _, mut g)) = hit else {
+    let Some((e, gb, mut g)) = hit else {
         punches.count = 0;
         return;
     };
@@ -142,9 +142,11 @@ pub fn punch(
     punches.last = now;
     punches.target = Some(e);
     if punches.count >= KNOCKOUT_HITS {
+        crate::sfx::play(crate::sfx::GUARD_KNOCKED_OUT + g.voice(), Some(gb.pos));
         g.knock_out();
         punches.count = 0;
     } else {
+        crate::sfx::play(crate::sfx::GUARD_PUNCHED + g.voice(), Some(gb.pos));
         g.punched(sb.pos);
     }
 }

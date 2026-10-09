@@ -114,4 +114,10 @@ songs 1-3 are one piece whose `f8` commands raise different track sets.
   when hurt; item_box.c 0x16 taken, 0xb can't carry, 0xd / 0x48 / 0xa1 box
   sounds; rain.c starts the rain loop 0x1d4 once (raw command); bgmanage 0x2a
   on alert; menus 0x14 / 0x15 / 0x17 / 0x22 / 0x23. Guards' gunfire was not
-  found among these calls (the port uses the USP's 1).
+  found among these calls (the port uses the USP's 1).- Guards' voices are stage effects at `base + voice` (voice = a per-guard
+  value mod 4, `*(short *)(guard+0xf48 + 0x1e)`), from the soldier's state
+  functions (reached through state tables): 0x100 (hit, with noise 8),
+  0x104 / 0x10c / 0x120 (several reactions; 0x120 when the last punch
+  knocks him out, `FUN_0024d020`), 0x108 (falls, motions 0x89 / 0x99),
+  0x110 (hit), 0x114 (punched, motion 0x79, `FUN_0024b8e8`), 0x118 (motion
+  0x74), 0x11c (falling asleep, `FUN_00260320`, then the thud 0x36e).
