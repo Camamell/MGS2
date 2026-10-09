@@ -1,8 +1,9 @@
 //! DEMO.DAT cutscenes.
 //!
 //! A demo is a chain of chunks `u32 kind, u32 size, u32 frame, u32 0`:
-//! kind 0x10 headers, 2 event packets (every 5 frames), 1 streamed audio,
-//! 4 subtitles, 0xf0 the end (its frame is the length). An event packet
+//! kind 0x10 headers, 2 event packets, 1 streamed audio, 4 subtitles, 0xf0
+//! the end (its frame is the length). Frames count 300ths of a second (as
+//! `sdstream.c` does), so event packets, 5 apart, come once per 60 Hz frame. An event packet
 //! holds sub-records `u32 type, u32 size, u32 serial, ...` dispatched by the
 //! demo player (`FUN_00216308`, table at 0x1f3198 in a cutscene stage's
 //! resident image) on `type & 0x7fffffff`:
@@ -27,7 +28,7 @@
 
 use std::collections::BTreeMap;
 
-/// One subtitle: frames (60 per second) and text.
+/// One subtitle: times (300ths of a second) and text.
 #[derive(Clone, Debug)]
 pub struct Line {
     pub start: u32,

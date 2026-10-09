@@ -6,7 +6,8 @@
 //! stream that places and poses them every 5 frames; the models come from
 //! the cutscene stage's own files (and the Tanker's resident ones). The
 //! level is not part of the demo, so the stage being shown stays in view
-//! where it fits. Audio is not played.
+//! where it fits. Each demo's streamed audio (voices, music and effects
+//! mixed) plays from its first frame.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -50,6 +51,9 @@ pub fn demo_ids(script: &Gcx) -> Vec<u32> {
     out
 }
 
+/// Demo frames per second.
+pub const TICKS: f32 = 300.0;
+
 /// Reads one demo's chunks from DEMO.DAT.
 pub fn read(iso: &Path, id: u32) -> anyhow::Result<Vec<u8>> {
     let mut f = mgs2_formats::iso::Iso::open(iso)?.open_file("MGS2/DEMO.DAT")?;
@@ -86,6 +90,10 @@ pub struct Cutscene {
     pub lines: Vec<Line>,
     /// Its demos and the frame each starts at.
     pub demos: Vec<(u32, Demo)>,
+    /// Each demo's audio as a WAV file (empty without audio).
+    pub audio: Vec<Vec<u8>>,
+    /// Bumped when the frame jumps, so the audio restarts in step.
+    pub seek: u32,
     /// The cutscene stage's data (models and textures).
     pub stage: Option<StageData>,
     /// The scenery the cutscene stage's script places (its deck pieces,
@@ -115,27 +123,42 @@ pub fn idle(c: Res<Cutscene>) -> bool {
 pub fn load(iso: &Path, name: &str, script: &Gcx, stage: Option<StageData>) -> Cutscene {
     let mut lines = Vec::new();
     let mut demos = Vec::new();
+    let mut audio = Vec::new();
     let mut offset = 0;
     for id in demo_ids(script) {
         match read(iso, id) {
             Ok(bytes) => {
                 let d = fmt::parse(&bytes);
+                audio.push(mgs2_formats::vox::decode_clip(&bytes).map(|c| c.wav()).unwrap_or_default());
                 lines.extend(d.subtitles.iter().map(|x| Line { start: x.start + offset, end: x.end + offset, text: x.text.clone() }));
                 let len = d.length.max(d.subtitles.iter().map(|x| x.end).max().unwrap_or(0));
                 demos.push((offset, d));
-                offset += len + 30;
+                offset += len + 150;
             }
             Err(e) => warn!("demo {id:#x}: {e:#}"),
         }
     }
     info!(
-        "cutscene {name}: {} demos, {} subtitle lines, {} camera keys, {} frames",
+        "cutscene {name}: {} demos, {} subtitle lines, {} camera keys, {} frames, {:.1} MB audio",
         demos.len(),
         lines.len(),
         demos.iter().map(|d| d.1.cameras.len()).sum::<usize>(),
-        offset
+        offset,
+        audio.iter().map(Vec::len).sum::<usize>() as f32 / 1e6
     );
-    Cutscene { lines, demos, stage, scenery: Vec::new(), backdrop: None, frame: 0.0, length: offset as f32, name: name.to_string(), spawned: false }
+    Cutscene {
+        lines,
+        demos,
+        audio,
+        seek: 0,
+        stage,
+        scenery: Vec::new(),
+        backdrop: None,
+        frame: 0.0,
+        length: offset as f32,
+        name: name.to_string(),
+        spawned: false,
+    }
 }
 
 #[derive(Component)]
@@ -238,9 +261,10 @@ pub fn play(
         return;
     }
     *v = Visibility::Inherited;
-    c.frame += time.delta_secs().min(0.1) * 60.0;
+    c.frame += time.delta_secs().min(0.1) * TICKS;
     if keys.just_pressed(KeyCode::Space) {
         c.frame = c.lines.iter().find(|l| l.start as f32 > c.frame).map_or(c.length, |l| l.start as f32);
+        c.seek += 1;
     }
     if keys.just_pressed(KeyCode::Escape) || c.frame >= c.length {
         c.length = 0.0;
@@ -258,6 +282,37 @@ pub fn play(
     let current = c.lines.iter().rev().find(|l| (l.start as f32) <= c.frame && c.frame <= l.end as f32);
     let note = if shown { "" } else { "[ the scene is not shown ]\n\n" };
     **t = format!("{note}{}\n\nSpace: next line   Esc: skip", current.map_or("", |l| l.text.as_str()));
+}
+
+/// The audio of the demo being played.
+#[derive(Component)]
+pub struct DemoAudio;
+
+/// Starts each demo's audio when the demo begins (or at the right point
+/// after a skip) and stops it when the cutscene ends.
+pub fn sound(
+    mut commands: Commands,
+    c: Res<Cutscene>,
+    mut sources: ResMut<Assets<AudioSource>>,
+    playing: Query<Entity, With<DemoAudio>>,
+    mut started: Local<Option<(usize, u32)>>,
+) {
+    let want = if c.active() { current(&c).map(|(i, _)| (i, c.seek)) } else { None };
+    if *started == want {
+        return;
+    }
+    for e in &playing {
+        commands.entity(e).despawn();
+    }
+    *started = want;
+    let Some((di, f)) = want.and(current(&c)) else { return };
+    let Some(wav) = c.audio.get(di).filter(|w| !w.is_empty()) else { return };
+    let handle = sources.add(AudioSource { bytes: wav.clone().into() });
+    let mut settings = PlaybackSettings::DESPAWN;
+    if f > 1.0 {
+        settings.start_position = Some(std::time::Duration::from_secs_f32(f / TICKS));
+    }
+    commands.spawn((AudioPlayer(handle), settings, DemoAudio));
 }
 
 /// The demo whose time span holds the cutscene frame, and the frame in it.
@@ -305,6 +360,7 @@ pub fn stage(
             c.scenery.clear();
             c.backdrop = None;
             c.demos.clear();
+            c.audio.clear();
         }
         return;
     }

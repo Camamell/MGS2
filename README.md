@@ -112,13 +112,13 @@ What works:
 - Olga on the navigational deck (w00b): her original step tables are run
   from the disc (aim, burst timings, reloads, moving between her positions);
   only the choice of the next sequence is simplified (`re/notes/guard-ai.md`).
-- Codec calls (K) with the original dialogue and voices (VOX.DAT; the
-  9375 Hz playback rate is inferred, see `re/notes/formats.md`); hanging
+- Codec calls (K) with the original dialogue and voices (VOX.DAT); hanging
   from railings.
 - Cutscenes play from DEMO.DAT: the camera track, the characters posed by
   the demo's actor stream, the cutscene stage's scenery, and subtitles
   (`--skip-cutscenes` to skip; Space next line, Esc skip), with the
-  characters' skinned cutscene meshes (`.evm`). No audio or effects.
+  characters' skinned cutscene meshes (`.evm`) and the demos' own audio
+  (voices, music and effects). No visual effects yet.
   Exits through a cutscene continue to the stage it leads to.
 - The holds' finale (w04c): photograph Metal Gear RAY with the digital
   camera. Photos are graded by a port of the game's own routine against the

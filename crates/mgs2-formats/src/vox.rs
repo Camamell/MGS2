@@ -6,11 +6,37 @@
 //! data chunks (SPU ADPCM; stereo interleaves 0x800-byte blocks per
 //! channel), kind 5 lip sync, kind 4 subtitles and the end chunk 0xf0.
 //!
-//! The rate field (0xac44) is not the playback rate: the speech in clips
-//! with subtitles lines up with them at about 9375 Hz per channel (SPU pitch
-//! 0x320), which is used here.
+//! The rate field is the playback rate (the IOP sets the voice pitch to
+//! `rate * 4096 / 48000`); VOX clips are 44100 Hz. Chunk times (the frame
+//! field, subtitles) count 300ths of a second.
+//!
+//! Byte 10 of the audio header is the format (`FUN_00118cd0`): 0 SPU ADPCM,
+//! 1 the DEMO.DAT cutscene format. Format 1 streams go to the IOP driver's
+//! PCM path (iop_main.irx `FUN_00018028`), which plays them at the SPU2's
+//! 48 kHz: interleaved left/right bytes, each a delta added to its channel
+//! (`FUN_00019ae4`, an 8-bit float: bit 7 sign, bits 3-6 mantissa, bits 0-2
+//! a right shift where 7 means the small denormal range).
 
-pub const RATE: u32 = 9375;
+pub const DEMO_RATE: u32 = 48000;
+
+/// `FUN_00019ae4`: one format-1 delta.
+pub fn dpcm_delta(b: u8) -> i16 {
+    let m = i32::from(b & 0x78);
+    let v = if b & 7 == 7 { m << 1 } else { ((m | 0x80) << 7) >> (b & 7) };
+    (if b & 0x80 != 0 { -v } else { v }) as i16
+}
+
+/// Format 1 (interleaved stereo bytes) to PCM.
+pub fn decode_dpcm(data: &[u8]) -> Vec<i16> {
+    let (mut l, mut r) = (0i16, 0i16);
+    let mut out = Vec::with_capacity(data.len());
+    for pair in data.chunks_exact(2) {
+        l = l.wrapping_add(dpcm_delta(pair[0]));
+        r = r.wrapping_add(dpcm_delta(pair[1]));
+        out.extend([l, r]);
+    }
+    out
+}
 const INTERLEAVE: usize = 0x800;
 
 /// SPU ADPCM (16-byte blocks of 28 samples) to PCM.
@@ -42,7 +68,7 @@ pub struct Clip {
     pub rate: u32,
     /// Interleaved samples.
     pub samples: Vec<i16>,
-    /// Length in frames (60 per second), from the end chunk.
+    /// Length in 300ths of a second, from the end chunk.
     pub frames: u32,
 }
 
@@ -55,6 +81,8 @@ pub fn decode_clip(data: &[u8]) -> Option<Clip> {
     let mut pos = 0;
     let mut audio = Vec::new();
     let mut channels = 1u16;
+    let mut format = 0u8;
+    let mut rate = 44100;
     let mut frames = 0;
     let mut n = 0;
     while let (Some(kind), Some(size), Some(frame)) = (u32_le(data, pos), u32_le(data, pos + 4), u32_le(data, pos + 8)) {
@@ -64,7 +92,13 @@ pub fn decode_clip(data: &[u8]) -> Option<Clip> {
         }
         let body = &data[pos + 16..pos + size];
         match kind {
-            1 if size == 0x20 => channels = u16::from(body.get(8).copied().unwrap_or(1).clamp(1, 2)),
+            1 if size == 0x20 => {
+                channels = u16::from(body.get(8).copied().unwrap_or(1).clamp(1, 2));
+                format = body.get(10).copied().unwrap_or(0);
+                if let Some(r) = body.get(6..8) {
+                    rate = u32::from(u16::from_be_bytes([r[0], r[1]])).max(1);
+                }
+            }
             1 => audio.extend_from_slice(body),
             0xF0 => {
                 frames = frame;
@@ -78,6 +112,9 @@ pub fn decode_clip(data: &[u8]) -> Option<Clip> {
     if audio.is_empty() {
         return None;
     }
+    if format == 1 {
+        return Some(Clip { channels: 2, rate: DEMO_RATE, samples: decode_dpcm(&audio), frames });
+    }
     let samples = if channels == 2 {
         let (mut l, mut r) = (Vec::new(), Vec::new());
         for (i, block) in audio.chunks(INTERLEAVE).enumerate() {
@@ -88,7 +125,7 @@ pub fn decode_clip(data: &[u8]) -> Option<Clip> {
     } else {
         decode_adpcm(&audio)
     };
-    Some(Clip { channels, rate: RATE, samples, frames })
+    Some(Clip { channels, rate, samples, frames })
 }
 
 impl Clip {
@@ -126,5 +163,14 @@ mod tests {
         block[0] = 0x0C;
         block[1] = 0x02;
         assert!(decode_adpcm(&block).iter().all(|s| *s == 0));
+    }
+
+    #[test]
+    fn dpcm_deltas() {
+        assert_eq!(dpcm_delta(0x07), 0);
+        assert_eq!(dpcm_delta(0x0F), 16);
+        assert_eq!(dpcm_delta(0x8F), -16);
+        assert_eq!(dpcm_delta(0x00), 0x4000);
+        assert_eq!(dpcm_delta(0x7E), 0xF8 << 1);
     }
 }

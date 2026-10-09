@@ -216,25 +216,32 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   (matches the data chunks exactly), `00 7f`, big-endian u16 rate field
   (VOX 0xac44 = 44100, DEMO 0xbb50 = 48000), a channel byte (VOX 1 or 2,
   DEMO 2). Data are 16 KiB SPU-ADPCM chunks (`29 02 ...` blocks).
+- Format byte (header +10, `FUN_00118cd0` in sdstream.c): 0 SPU ADPCM, 1
+  the DEMO.DAT format, 2 a third (`DAT_000e1fe8` on the IOP). The EE sends
+  the header to the IOP driver (iop_main.irx in MODULE.IPK) as commands
+  `0xf0/0xf2 size>>4`, `0xf5/0xf4 format<<20 | channels<<16 | rate`;
+  stream 0 only plays ADPCM, stream 1 all three.
+- Times: chunk frame fields and subtitle spans count 300ths of a second
+  (sdstream.c computes lengths as `bytes * 300 / (rate * channels)`); an
+  end frame of 60793 is the 202.6 s of the opening's audio.
 - Playback: SPU ADPCM, stereo clips interleave 0x800-byte blocks per
   channel (each channel's last block carries the end flag; the two are
-  0x800 apart). The header's rate field is not the playback rate: in the
-  "caught" clip (sector 0xddaa) the three shouts' loudness lines up with
-  their subtitle spans at 9325-9400 Hz per channel whatever the
-  interleave, taken as 9375 Hz (SPU pitch 0x320); a mono Codec line's
-  loudness against its lip-sync chunks agrees (about 9.5 kHz). Decoded
-  lengths stay 6-9 s under the clips' end frames (trailing silence). Not
-  confirmed by ear. `mgs2_formats::vox` decodes clips; Codec calls play
+  0x800 apart), at the header's rate (the IOP sets pitch `rate * 4096 /
+  48000`). VOX clips are 44100 Hz: the earlier fit of the "caught" shouts
+  to their subtitles (about 9375 Hz with 60 ticks a second) is 46.9 kHz
+  with the real 300. `mgs2_formats::vox` decodes clips; Codec calls play
   their voice blocks (`#01e658 <id>`).
-- DEMO.DAT audio (kind 1, header rate 0xbb50, 2 channels) is not SPU
-  ADPCM: silence is `07 07 07 ...` and the bytes do not carry ADPCM block
-  headers. Not decoded.
-## DEMO.DAT (cutscenes): cameras and actors decoded
+- DEMO.DAT audio (format 1, rate field 0xbb50, 2 channels): the IOP's PCM
+  path (`FUN_00018028`) feeds the SPU2's 48 kHz input. Bytes alternate
+  left/right; each is a delta added to that channel's 16-bit sample
+  (`FUN_00019ae4`): `m = b & 0x78`; if `b & 7 == 7` the delta is `m << 1`,
+  else `((m | 0x80) << 7) >> (b & 7)`; bit 7 negates it. So `07` is
+  silence. A demo's audio is voices, music and effects mixed.## DEMO.DAT (cutscenes): cameras and actors decoded
 
 - Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i
   0x40000000 + n`; n is the demo's first sector (2048 bytes).
 - A demo is a chain of chunks `u32 kind, u32 size, u32 frame, u32 0`:
-  kind-0x10 headers, kind 2 (event packets every 5 frames), kind 1 (16 KiB
+  kind-0x10 headers, kind 2 (event packets every 5 ticks, 300 a second), kind 1 (16 KiB
   streamed audio), kind 4 (subtitles: `u32 size`, then records `u32 start,
   u32 end, u32 0, u32 length`, text with `0x80 '|'` line breaks) and 0xf0
   (end; its frame is the length).

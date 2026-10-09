@@ -230,7 +230,7 @@ pub fn voice(
     let (Some(id), Some(data)) = (want, data) else { return };
     match data.voice(id) {
         Ok(wav) => {
-            let secs = (wav.len() - 44) as f32 / (mgs2_formats::vox::RATE as f32 * 2.0 * f32::from(u16::from_le_bytes([wav[22], wav[23]])));
+            let secs = (wav.len() - 44) as f32 / u32::from_le_bytes([wav[28], wav[29], wav[30], wav[31]]) as f32;
             info!("codec voice {id:#x}: {secs:.1} s");
             let handle = sources.add(AudioSource { bytes: wav.into() });
             commands.spawn((AudioPlayer(handle), PlaybackSettings::DESPAWN, CodecVoice));
