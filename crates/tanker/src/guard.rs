@@ -223,12 +223,13 @@ pub struct Guard {
     pub anim: Anim,
 }
 
-/// Where Snake last fired a loud (unsuppressed) shot, for the guards to hear.
+/// A noise Snake made for the guards to hear: where, and how far it carries
+/// (mm): the USP, knocking on a wall.
 #[derive(Resource, Default)]
-pub struct Gunshot(pub Option<Vec3>);
+pub struct Gunshot(pub Option<(Vec3, f32)>);
 
 /// How far the USP is heard (mm; not from the game).
-const GUNSHOT_RANGE: f32 = 10_000.0;
+pub const GUNSHOT_RANGE: f32 = 10_000.0;
 
 /// Shooting (`FUN_00228710`/`FUN_00228F80`): aim for 21 frames, then a
 /// burst with one shot every 4 frames and a 1-in-3 chance to stop after
@@ -653,10 +654,10 @@ pub fn think(
                 continue;
             }
         }
-        // A gunshot within earshot draws a look (range assumed).
-        if let Some(at) = shot
+        // A noise within earshot draws a look (ranges assumed).
+        if let Some((at, range)) = shot
             && g.level < 2
-            && body.pos.distance(at) < GUNSHOT_RANGE
+            && body.pos.distance(at) < range
             && matches!(g.state, State::Patrol | State::Wait(_) | State::Return)
         {
             g.state = State::Investigate { target: at, sub: 0, timer: 0 };

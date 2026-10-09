@@ -845,6 +845,7 @@ fn main() -> Result<()> {
     app.add_plugins(fpv::plugin);
     app.add_plugins(cbox::plugin);
     app.add_plugins(grenade::plugin);
+    app.add_systems(Update, motion_sheet.after(player::control).before(body::skin));
     app.add_plugins(thunder::plugin);
     app.add_plugins(thunder::bolt_plugin);
     // MGS2_FPS=1: log frame rate and time every second.
@@ -1860,5 +1861,38 @@ fn capture(mut commands: Commands, time: Res<Time>, mut c: ResMut<Capture>, mut 
     }
     if t > c.at + 2.0 {
         exit.write(AppExit::Success);
+    }
+}
+
+/// `MGS2_MOTION_SHEET=<dir>`: from 3 s on, holds Snake in each of his
+/// motions in turn (its middle frame, half a second each) and saves a
+/// screenshot of each as `<dir>/<n>.png`, then exits (to identify motions).
+fn motion_sheet(
+    mut commands: Commands,
+    time: Res<Time>,
+    game: Res<Game>,
+    mut q: Query<&mut body::Body, With<player::Player>>,
+    mut last: Local<Option<usize>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    let Some(dir) = std::env::var_os("MGS2_MOTION_SHEET") else { return };
+    let t = time.elapsed_secs() - 3.0;
+    let Ok(mut b) = q.single_mut() else { return };
+    let Some(set) = b.motions.map(|m| &game.data.motions[m].1) else { return };
+    if t < 0.0 {
+        return;
+    }
+    let n = (t / 0.5) as usize;
+    if n >= set.motions.len() {
+        exit.write(AppExit::Success);
+        return;
+    }
+    b.motion = n;
+    b.once = true;
+    b.frame = (set.motions[n].length / 2) as f32;
+    if (t % 0.5) > 0.35 && *last != Some(n) {
+        *last = Some(n);
+        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(std::path::Path::new(&dir).join(format!("{n:03}.png"))));
     }
 }

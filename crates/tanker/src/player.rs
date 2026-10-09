@@ -30,6 +30,16 @@ pub mod motion {
     /// Hanging by the hands, and moving along while hanging.
     pub const HANG: usize = 20;
     pub const SHIMMY: usize = 21;
+    /// Back to a wall (standing / crouched): idle, sidesteps to his right
+    /// (+x) and left, a knock. Identified from their poses and root travel.
+    pub const WALL: usize = 55;
+    pub const WALL_RIGHT: usize = 57;
+    pub const WALL_LEFT: usize = 58;
+    pub const WALL_KNOCK: usize = 67;
+    pub const WALL_CROUCH: usize = 79;
+    pub const WALL_CROUCH_RIGHT: usize = 81;
+    pub const WALL_CROUCH_LEFT: usize = 82;
+    pub const WALL_CROUCH_KNOCK: usize = 91;
 }
 
 /// Travel speeds measured from those motions' root tracks (mm/s).
@@ -95,7 +105,18 @@ pub struct Player {
     pub fall_from: Option<f32>,
     /// In the cardboard box.
     pub boxed: bool,
+    /// Back to a wall: the direction away from it (xz).
+    pub wall: Option<Vec2>,
+    /// Seconds spent pushing into a wall (presses at [`WALL_PRESS`]).
+    pub wall_push: f32,
 }
+
+/// Pushing into a wall this long puts Snake's back to it (assumed).
+const WALL_PRESS: f32 = 0.25;
+/// Sidestep along a wall: motions 57 / 58 travel 453 mm in 48 frames.
+const WALL_STEP_SPEED: f32 = 453.0 / 48.0 * 60.0;
+/// How far a knock on a wall is heard (assumed).
+const KNOCK_RANGE: f32 = 4000.0;
 
 /// Maximum life by difficulty, from `n_title`'s difficulty select
 /// (Very Easy 200, Easy 150, Normal 100, Hard 75, Extreme 50).
@@ -296,7 +317,7 @@ pub fn control(
             if usp {
                 crate::bullet::fire_round(&mut commands, muzzle, f);
                 crate::sfx::play(crate::sfx::USP, Some(body.pos));
-                gunshot.0 = Some(body.pos);
+                gunshot.0 = Some((body.pos, crate::guard::GUNSHOT_RANGE));
             } else {
                 crate::bullet::fire_dart(&mut commands, muzzle, f);
                 crate::sfx::play(crate::sfx::M9, Some(body.pos));
@@ -317,7 +338,7 @@ pub fn control(
             input += v;
         }
     }
-    if auto.is_some_and(|a| (a.from..a.from + a.seconds).contains(&time.elapsed_secs())) {
+    if auto.as_ref().is_some_and(|a| (a.from..a.from + a.seconds).contains(&time.elapsed_secs())) {
         input = Vec2::Y;
     }
     if keys.just_pressed(KeyCode::KeyC) {
@@ -355,7 +376,60 @@ pub fn control(
         dir = Vec2::new(f.x, f.z).normalize_or_zero();
     }
 
+    // MGS2_WALK_DIR=x,z (testing): walk that world direction meanwhile.
+    if let Ok(v) = std::env::var("MGS2_WALK_DIR")
+        && let Some((x, z)) = v.split_once(',')
+        && auto.as_ref().is_some_and(|a| (a.from..a.from + a.seconds).contains(&time.elapsed_secs()))
+    {
+        dir = Vec2::new(x.parse().unwrap_or(0.0), z.parse().unwrap_or(0.0)).normalize_or_zero();
+    }
     let moving = dir != Vec2::ZERO;
+
+    // Back to a wall: sidestep along it, Space knocks, away leaves it.
+    if let Some(n) = p.wall {
+        let away = Vec3::new(n.x, 0.0, n.y);
+        // His right while facing away from the wall.
+        let right3 = Vec3::new(n.y, 0.0, -n.x);
+        if dir.dot(n) > 0.5 || p.prone || p.boxed || entering {
+            p.wall = None;
+        } else {
+            body.yaw = n.x.atan2(n.y);
+            if keys.just_pressed(KeyCode::Space) {
+                body.play_once(if p.crouch { motion::WALL_CROUCH_KNOCK } else { motion::WALL_KNOCK });
+                // Knock sound assumed (0x2b, a sharp knock-like impact).
+                crate::sfx::play(0x2B, Some(body.pos));
+                gunshot.0 = Some((body.pos, KNOCK_RANGE));
+                p.busy = 0.8;
+                p.speed = 0.0;
+                return;
+            }
+            let along = dir.dot(Vec2::new(right3.x, right3.z));
+            let mut step = if along.abs() > 0.3 { along.signum() } else { 0.0 };
+            let mut next = body.pos + right3 * step * WALL_STEP_SPEED * dt;
+            if let Some(col) = &game.collision {
+                next = col.push_out(next, RADIUS, p.height(), STEP_UP.min(p.height() - 1.0));
+                // Stop at the wall's end (nothing at his back) or a drop.
+                let back = next + Vec3::Y * 800.0;
+                let behind = col.ray(back, back - away * (RADIUS + 250.0));
+                if behind.is_none() || col.floor_below(next.x, next.z, next.y + STEP_UP).is_none() {
+                    next = body.pos;
+                    step = 0.0;
+                }
+            }
+            body.pos = next;
+            p.speed = if step != 0.0 { WALL_STEP_SPEED } else { 0.0 };
+            body.play(match (p.crouch, step) {
+                (false, s) if s > 0.0 => motion::WALL_RIGHT,
+                (false, s) if s < 0.0 => motion::WALL_LEFT,
+                (false, _) => motion::WALL,
+                (true, s) if s > 0.0 => motion::WALL_CROUCH_RIGHT,
+                (true, s) if s < 0.0 => motion::WALL_CROUCH_LEFT,
+                (true, _) => motion::WALL_CROUCH,
+            });
+            return;
+        }
+    }
+
     let speed = match (moving, p.crouch, walking) {
         (false, _, _) => 0.0,
         (true, _, _) if p.prone => CRAWL_SPEED,
@@ -372,7 +446,19 @@ pub fn control(
     let old = body.pos;
     let mut next = body.pos + Vec3::new(dir.x, 0.0, dir.y) * speed * dt;
     if let Some(col) = &game.collision {
+        let wanted = next;
         next = col.push_out(next, RADIUS, p.height(), STEP_UP.min(p.height() - 1.0));
+        // Walking into a wall for a moment puts his back to it.
+        let push = Vec2::new(next.x - wanted.x, next.z - wanted.z);
+        if moving && !p.prone && !p.boxed && !entering && push.length() > speed * dt * 0.5 && dir.dot(-push.normalize_or_zero()) > 0.8 {
+            p.wall_push += dt;
+            if p.wall_push >= WALL_PRESS {
+                p.wall = Some(push.normalize_or_zero());
+                p.wall_push = 0.0;
+            }
+        } else {
+            p.wall_push = 0.0;
+        }
         match col.floor_below(next.x, next.z, next.y + STEP_UP) {
             Some(floor) => {
                 if next.y - floor > 30.0 {
