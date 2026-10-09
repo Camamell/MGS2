@@ -116,6 +116,9 @@ const CODEC_THEN: &[u32] = &[0xDB03A6];
 /// (ids 0x2000xxxx; the holds chain the commandant's speech this way, each
 /// line's proc picking the next). The proc gets 0 when the line is over.
 const SPEECH: u32 = 0x7AA13A;
+/// `#f2eedc -c <command>`: a raw sound driver command (sound effects
+/// when the high byte is 0).
+const SOUND: u32 = 0xF2EEDC;
 /// `#89a17e { ... }` in Codec records: repeats its block while the block
 /// returns non-zero.
 const CODEC_LOOP: u32 = 0x89A17E;
@@ -202,9 +205,11 @@ pub enum CodecReq {
     Call { freq: i32, id: u32 },
     /// A call that runs `then` when it ends.
     Then { id: u32, then: Option<u32> },
-    /// Spoken dialogue (not shown yet) that runs `then` when it ends.
+    /// Spoken dialogue that runs `then` when it ends.
     Speech { id: u32, then: Option<u32> },
     Reset,
+    /// A raw sound driver command (`#f2eedc -c`).
+    Sound(u32),
 }
 
 impl Banks {
@@ -516,7 +521,7 @@ impl<'a> Vm<'a> {
         };
         let known = CALL_AFTER.contains(&id)
             || CODEC_THEN.contains(&id)
-            || [FILL_ARRAY, PHOTO_TARGET, PHOTO_DONE, SPEECH, WHEN_FREE, str_code(b"rand")].contains(&id);
+            || [FILL_ARRAY, PHOTO_TARGET, PHOTO_DONE, SPEECH, SOUND, WHEN_FREE, str_code(b"rand")].contains(&id);
         known.then_some(id)
     }
 
@@ -572,6 +577,10 @@ impl<'a> Vm<'a> {
             if let Some(cid) = opt(self, b'c').first().and_then(Val::int) {
                 let then = proc(&opt(self, b'p'));
                 self.codec.push(CodecReq::Then { id: cid as u32, then });
+            }
+        } else if id == SOUND {
+            if let Some(c) = opt(self, b'c').first().and_then(Val::int) {
+                self.codec.push(CodecReq::Sound(c as u32));
             }
         } else if id == SPEECH {
             if let Some(sid) = a.get(1).and_then(|v| self.value(v, args).int()) {

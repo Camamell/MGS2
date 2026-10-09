@@ -299,6 +299,7 @@ fn step(o: &mut Olga, b: &mut Body, f: u32, cx: &mut Ctx) -> bool {
                 o.rounds -= 1;
                 let muzzle = b.pos + Vec3::Y * 1400.0 + b.forward() * 400.0;
                 bullet::fire(cx.commands, cx.rng, muzzle, cx.target.chest);
+                crate::sfx::play(crate::sfx::USP, Some(b.pos));
             }
             next(o)
         }

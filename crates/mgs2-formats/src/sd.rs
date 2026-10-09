@@ -50,6 +50,12 @@ const PAN: [u32; 41] = [
     0, 321, 850, 1781, 2682, 3555, 3933, 4855, 5655, 6425, 6758, 7488, 8188, 8860, 9220, 9847, 10446, 11015, 11556, 11844, 12287, 12707, 12957, 13387, 13787, 14159, 14353, 14680,
     14978, 15248, 15489, 15587, 15786, 15957, 16113, 16165, 16263, 16331, 16371, 16383, 16383,
 ];
+/// Effect pan curve, 0..64 (0x1aa78).
+const PAN64: [u32; 65] = [
+    0, 197, 589, 1231, 1672, 2291, 2657, 3255, 3665, 4012, 4579, 4969, 5513, 5887, 6357, 6716, 7068, 7559, 7848, 8318, 8639, 8909, 9349, 9648, 10065, 10309, 10705, 10973, 11236,
+    11564, 11811, 12154, 12287, 12418, 12736, 12951, 13218, 13418, 13611, 13876, 14029, 14273, 14435, 14656, 14783, 14924, 15114, 15222, 15391, 15502, 15606, 15730, 15819, 15935,
+    16008, 16101, 16151, 16202, 16265, 16296, 16338, 16358, 16377, 16383, 16383,
+];
 /// Vibrato shape (0x1a9a4).
 const VIB: [u8; 32] = [0, 32, 56, 80, 104, 128, 144, 160, 176, 192, 208, 224, 232, 240, 240, 248, 255, 248, 244, 240, 232, 224, 208, 192, 176, 160, 144, 128, 104, 80, 56, 32];
 /// Random pitch table (0x1a920).
@@ -68,61 +74,150 @@ pub struct Tone {
     pub raw: [u8; 16],
 }
 
-/// A stage's sound pack, ready to play: tones, SPU memory and songs.
+/// Sound packs loaded the way the driver loads them, ready to play: tones,
+/// sample memory, songs and sound effects.
 pub struct Pack {
     pub tones: Vec<Tone>,
+    /// SPU memory, then (from `IOP_BANK`) the IOP-side bank whose tones the
+    /// driver streams into the SPU when they play.
     pub spu: Vec<u8>,
-    pub songs: Vec<u8>,
+    /// Song data, then the resident and the stage sound effect data.
+    code: Vec<u8>,
+    /// Resident effect table in `code` (ids under 0x100; sequences 0x1000
+    /// after it).
+    se_resident: Option<usize>,
+    /// Stage effects: id - 0x100 -> entry, and the table in `code`.
+    se_map: Vec<u8>,
+    se_stage: Option<usize>,
+    /// Tones whose samples are in the IOP-side bank.
+    iop_tones: Vec<bool>,
 }
 
-fn be32(d: &[u8], o: usize) -> Option<u32> {
-    d.get(o..o + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap()))
-}
-fn le32(d: &[u8], o: usize) -> Option<u32> {
-    d.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-}
+/// Where the IOP-side bank (wave tables at offset 0x1000 and up, loaded to
+/// IOP 0x1ba70 by `FUN_00001928`) sits in `Pack::spu`.
+const IOP_BANK: usize = SPU_RAM;
+const IOP_BANK_SIZE: usize = 0x80000;
 
 impl Pack {
+    /// A stage's pack on its own.
     pub fn parse(data: &[u8]) -> Option<Pack> {
-        let sec = |i: usize| le32(data, i * 8).map(|s| s as usize * 0x800);
-        let mut pack = Pack { tones: vec![Tone::default(); 0x240], spu: vec![0; SPU_RAM], songs: Vec::new() };
+        Self::with_resident(None, data)
+    }
+
+    /// A stage's pack loaded over the chapter's resident pack (`r_tnk0`),
+    /// which brings the common samples and sound effects.
+    pub fn with_resident(resident: Option<&[u8]>, stage: &[u8]) -> Option<Pack> {
+        let mut pack = Pack {
+            tones: vec![Tone::default(); 0x240],
+            spu: vec![0; SPU_RAM + IOP_BANK_SIZE],
+            code: Vec::new(),
+            se_resident: None,
+            se_map: Vec::new(),
+            se_stage: None,
+            iop_tones: vec![false; 0x240],
+        };
+        // Songs first so their offsets are offsets in `code`.
+        let s = sec(stage, 3)?;
+        pack.code = stage.get(s..)?.to_vec();
+        if let Some(r) = resident {
+            pack.load(r);
+        }
+        pack.load(stage);
+        Some(pack)
+    }
+
+    fn load(&mut self, data: &[u8]) {
+        let id = |i: usize| le32(data, i * 8 + 4).unwrap_or(0xFF);
         for b in 0..2 {
-            let o = sec(b)?;
-            if o == 0 || o >= data.len() {
-                continue;
-            }
-            let (off, size) = (be32(data, o)? as usize, be32(data, o + 4)? as usize);
-            let table = o + 0x10;
-            for i in 0..size / 16 {
-                let Some(raw) = data.get(table + i * 16..table + i * 16 + 16) else { break };
-                let raw: [u8; 16] = raw.try_into().unwrap();
-                if let Some(t) = pack.tones.get_mut(off / 16 + i) {
-                    *t = Tone { addr: u32::from_le_bytes(raw[..4].try_into().unwrap()), note: raw[4], fine: raw[5], raw };
-                }
-            }
-            let p = table + size;
-            let (addr, n) = (be32(data, p)? as usize, be32(data, p + 4)? as usize);
-            let src = data.get(p + 0x10..(p + 0x10 + n).min(data.len()))?;
-            let dst = SPU_BASE + addr;
-            if dst + src.len() <= SPU_RAM {
-                pack.spu[dst..dst + src.len()].copy_from_slice(src);
+            if id(b) != 0xFF
+                && let Some(o) = sec(data, b)
+            {
+                self.load_bank(data, o);
             }
         }
-        let s = sec(3)?;
-        pack.songs = data.get(s..)?.to_vec();
-        Some(pack)
+        if id(2) != 0xFF
+            && let (Some(o), Some(end)) = (sec(data, 2), sec(data, 3))
+            && let (Some(map), Some(rest)) = (data.get(o..o + 0x800), data.get(o + 0x800..end.min(data.len())))
+        {
+            let base = self.code.len();
+            self.code.extend_from_slice(rest);
+            if map[..2] == [0xFE, 0xFE] {
+                self.se_resident = Some(base);
+            } else {
+                self.se_map = map.to_vec();
+                self.se_stage = Some(base);
+            }
+        }
+    }
+
+    /// `FUN_00001928` + `FUN_0000178c`.
+    fn load_bank(&mut self, data: &[u8], o: usize) -> Option<()> {
+        let (off, size) = (be32(data, o)? as usize, be32(data, o + 4)? as usize);
+        let table = o + 0x10;
+        let count = size / 16;
+        let entry = |i: usize| -> Option<[u8; 16]> { data.get(table + i * 16..table + i * 16 + 16).map(|r| r.try_into().unwrap()) };
+        let addr = |r: &[u8; 16]| u32::from_le_bytes(r[..4].try_into().unwrap());
+        // A table loaded at tone 0 runs while its addresses rise; the rest
+        // goes to tone 0x200 on (the drum tones).
+        let mut split = count;
+        if off == 0 {
+            let mut prev = 0;
+            for i in 0..count {
+                let a = addr(&entry(i)?);
+                if i > 0 && a < prev {
+                    split = i;
+                    break;
+                }
+                prev = a;
+            }
+        }
+        let iop = off >= 0x1000;
+        for i in 0..count {
+            let raw = entry(i)?;
+            let n = if i < split { off / 16 + i } else { 0x200 + i - split };
+            if let Some(t) = self.tones.get_mut(n) {
+                *t = Tone { addr: addr(&raw), note: raw[4], fine: raw[5], raw };
+                self.iop_tones[n] = iop;
+            }
+        }
+        let p = table + size;
+        let (dst, n) = (be32(data, p)? as usize, be32(data, p + 4)? as usize);
+        let src = data.get(p + 0x10..(p + 0x10 + n).min(data.len()))?;
+        let (base, limit) = if iop { (IOP_BANK, IOP_BANK + IOP_BANK_SIZE) } else { (SPU_BASE, SPU_RAM) };
+        let dst = base + dst;
+        let len = src.len().min(limit.saturating_sub(dst));
+        self.spu[dst..dst + len].copy_from_slice(&src[..len]);
+        Some(())
+    }
+
+    /// Sample start of a tone in `spu`.
+    fn tone_start(&self, n: usize) -> usize {
+        let a = self.tones[n].addr as usize;
+        if self.iop_tones[n] { IOP_BANK + a } else { SPU_BASE + a }
     }
 
     /// Number of songs in the pack.
     pub fn song_count(&self) -> u32 {
-        le32(&self.songs, 0).unwrap_or(0)
+        le32(&self.code, 0).unwrap_or(0)
     }
 
     /// Renders song `n` (1-based) for `seconds` as interleaved stereo at
     /// 48 kHz. `level` is the interactive music level (0 = the song's own
     /// mix; 1..8 as the game sets with `0xff00010n`).
     pub fn render(self: &Arc<Self>, n: u32, seconds: f32, level: u8) -> Vec<i16> {
-        let mut seq = Sequencer::new(self.clone(), n, level);
+        let mut seq = Sequencer::new(self.clone(), level);
+        seq.start_song(n);
+        self.run(seq, seconds)
+    }
+
+    /// Renders sound effect `cmd` (`pan << 18 | volume << 12 | id`).
+    pub fn render_effect(self: &Arc<Self>, cmd: u32, seconds: f32) -> Vec<i16> {
+        let mut seq = Sequencer::new(self.clone(), 0);
+        seq.play_effect(cmd);
+        self.run(seq, seconds)
+    }
+
+    fn run(&self, mut seq: Sequencer, seconds: f32) -> Vec<i16> {
         let ticks = (seconds * 200.0) as usize;
         let mut out = Vec::with_capacity(ticks * TICK_SAMPLES * 2);
         for _ in 0..ticks {
@@ -134,6 +229,18 @@ impl Pack {
         }
         out
     }
+}
+
+fn be32(d: &[u8], o: usize) -> Option<u32> {
+    d.get(o..o + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+}
+
+fn le32(d: &[u8], o: usize) -> Option<u32> {
+    d.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+}
+
+fn sec(data: &[u8], i: usize) -> Option<usize> {
+    le32(data, i * 8).map(|s| s as usize * 0x800).filter(|&o| o != 0 && o < data.len())
 }
 
 // ---------------------------------------------------------------- SPU
@@ -414,31 +521,104 @@ impl Track {
     }
 }
 
+/// Song tracks (and their voices); the effect tracks follow.
+const SONG_TRACKS: usize = 32;
+const EFFECT_TRACKS: usize = 12;
+const TRACKS: usize = SONG_TRACKS + EFFECT_TRACKS;
+
+/// An effect track's request (`FUN_00010004` / `FUN_0000ecbc`).
+#[derive(Clone, Copy, Default)]
+struct Effect {
+    cmd: u32,
+    priority: u8,
+    /// Nonzero: positional volume and pan from the command.
+    kind: u8,
+    group: u8,
+}
+
 struct Sequencer {
     pack: Arc<Pack>,
     tracks: Vec<Track>,
+    effects: [Effect; EFFECT_TRACKS],
     spu: Spu,
     level: i32,
-    key_on: u32,
-    key_off: u32,
+    key_on: u64,
+    key_off: u64,
     note_on: bool,
 }
 
 impl Sequencer {
-    fn new(pack: Arc<Pack>, n: u32, level: u8) -> Self {
-        let mut tracks = vec![Track::default(); 32];
-        let d = &pack.songs;
-        if n >= 1 && n <= pack.song_count()
+    fn new(pack: Arc<Pack>, level: u8) -> Self {
+        Sequencer {
+            pack,
+            tracks: vec![Track::default(); TRACKS],
+            effects: [Effect::default(); EFFECT_TRACKS],
+            spu: Spu { voices: vec![Voice::default(); TRACKS] },
+            level: i32::from(level),
+            key_on: 0,
+            key_off: 0,
+            note_on: false,
+        }
+    }
+
+    /// `FUN_0000e994`: song n's tracks (0 stops the song).
+    fn start_song(&mut self, n: u32) {
+        for i in 0..SONG_TRACKS {
+            self.tracks[i] = Track::default();
+            self.spu.voices[i].key_off();
+        }
+        let d = &self.pack.code;
+        if n >= 1 && n <= self.pack.song_count()
             && let Some(song) = le32(d, n as usize * 4)
         {
-            for (i, t) in tracks.iter_mut().enumerate() {
+            for i in 0..SONG_TRACKS {
                 let off = le32(d, song as usize + i * 4).unwrap_or(0) & 0xFF_FFFF;
                 if off != 0 {
-                    *t = Track::init(off as usize);
+                    self.tracks[i] = Track::init(off as usize);
                 }
             }
         }
-        Sequencer { pack, tracks, spu: Spu { voices: vec![Voice::default(); 32] }, level: i32::from(level), key_on: 0, key_off: 0, note_on: false }
+    }
+
+    /// `FUN_00010004`: starts sound effect `cmd` (`pan << 18 | volume << 12
+    /// | id`) on up to three effect tracks.
+    fn play_effect(&mut self, cmd: u32) {
+        let id = (cmd & 0x7FF) as usize;
+        let pack = self.pack.clone();
+        let (table, entry) = if id < 0x100 {
+            let Some(t) = pack.se_resident else { return };
+            (t, id)
+        } else {
+            let Some(t) = pack.se_stage else { return };
+            match pack.se_map.get(id - 0x100) {
+                Some(&e) if e != 0xFF => (t, usize::from(e)),
+                _ => return,
+            }
+        };
+        let e = table + entry * 16;
+        let b = |k: usize| pack.code.get(e + k).copied().unwrap_or(0);
+        let (priority, count, kind, group) = (b(0), b(1).min(3), b(2), b(3));
+        let mut used = 0u16;
+        for k in 0..usize::from(count) {
+            let Some(off) = le32(&pack.code, e + 4 + k * 4) else { break };
+            if off == 0xFFFF_FFFF {
+                continue;
+            }
+            let busy = |s: &Self, c: usize| s.tracks[SONG_TRACKS + c].ptr != 0;
+            let free = |c: &usize| used & (1 << *c) == 0;
+            let pick = (0..EFFECT_TRACKS)
+                .filter(free)
+                .find(|&c| busy(self, c) && (self.effects[c].cmd & 0x7FF) as usize == id)
+                .or_else(|| (0..EFFECT_TRACKS).filter(free).find(|&c| group != 0 && busy(self, c) && self.effects[c].group == group))
+                .or_else(|| (0..EFFECT_TRACKS).filter(free).find(|&c| !busy(self, c)))
+                .or_else(|| (0..EFFECT_TRACKS).filter(free).filter(|&c| self.effects[c].priority <= priority).min_by_key(|&c| self.effects[c].priority));
+            let Some(c) = pick else { continue };
+            used |= 1 << c;
+            self.effects[c] = Effect { cmd, priority, kind, group };
+            let i = SONG_TRACKS + c;
+            self.tracks[i] = Track::init(table + 0x1000 + off as usize);
+            self.spu.voices[i].key_off();
+        }
     }
 
     fn finished(&self) -> bool {
@@ -448,7 +628,7 @@ impl Sequencer {
     fn tick(&mut self) {
         self.key_on = 0;
         self.key_off = 0;
-        for i in 0..32 {
+        for i in 0..TRACKS {
             let t = &mut self.tracks[i];
             if t.mix_cur != t.mix_target {
                 t.mix_cur += t.mix_step;
@@ -462,12 +642,12 @@ impl Sequencer {
             }
         }
         // Key off first, then key on (the driver writes 0x1600 before 0x1500).
-        for i in 0..32 {
+        for i in 0..TRACKS {
             if self.key_off & (1 << i) != 0 {
                 self.spu.voices[i].key_off();
             }
         }
-        for i in 0..32 {
+        for i in 0..TRACKS {
             if self.key_on & (1 << i) != 0 {
                 self.spu.voices[i].key_on(&self.pack.spu);
             }
@@ -475,9 +655,8 @@ impl Sequencer {
     }
 
     fn byte(&self, p: usize) -> u8 {
-        self.pack.songs.get(p).copied().unwrap_or(0)
+        self.pack.code.get(p).copied().unwrap_or(0)
     }
-
     /// `FUN_000033a0`. Returns true when the track ends.
     fn track_tick(&mut self, i: usize) -> bool {
         {
@@ -521,7 +700,8 @@ impl Sequencer {
             self.vol_pan_move(i);
             self.dynamics(i);
         }
-        if self.note_on && self.tracks[i].tone < 0x100 {
+        // Effect tracks' IOP-side tones are streamed in and keyed on too.
+        if self.note_on && (self.tracks[i].tone < 0x100 || i >= SONG_TRACKS) {
             self.key_on |= 1 << i;
         }
         false
@@ -644,7 +824,7 @@ impl Sequencer {
         let Some(tone) = self.pack.tones.get(n as usize).copied() else { return };
         let r = tone.raw;
         let v = &mut self.spu.voices[i];
-        v.ssa = SPU_BASE + tone.addr as usize;
+        v.ssa = self.pack.tone_start(n as usize);
         let am: u16 = if r[6] != 0 { 0x8000 } else { 0 };
         v.adsr1 = am | (u16::from(0x7F - (r[7] & 0x7F)) << 8) | (u16::from(0xF - (r[8] & 0xF)) << 4) | u16::from(r[11] & 0xF);
         let sm: u16 = match r[9] {
@@ -864,10 +1044,20 @@ impl Sequencer {
         let v = (i32::from(t.vol) + t.lp1_vol + t.lp2_vol).clamp(0, 0x7F);
         let v = ((((t.pvod >> 8) & 0xFF) * v + 0x80) >> 8) as u32;
         let v = v.saturating_sub(t.dec_vol) + 1;
-        let pan = ((t.panf >> 8).clamp(0, 0x28)) as usize;
-        let mix = t.mix_cur.clamp(0, 0xFFFF) as u32;
-        let r = ((v * PAN[pan]) / 0x7F * mix) >> 16;
-        let l = ((v * PAN[0x28 - pan]) / 0x7F * mix) >> 16;
+        let (l, r) = match i.checked_sub(SONG_TRACKS).map(|c| self.effects[c]) {
+            // Positional effects: the command's volume and 64-step pan.
+            Some(e) if e.kind != 0 => {
+                let vol = (e.cmd >> 12) & 0x3F;
+                let pan = ((e.cmd >> 18) & 0x3F) as usize;
+                let k = ((v * vol) >> 6) + 1;
+                ((k * PAN64[0x40 - pan]) >> 7, (k * PAN64[pan]) >> 7)
+            }
+            effect => {
+                let pan = ((t.panf >> 8).clamp(0, 0x28)) as usize;
+                let mix = if effect.is_some() { 0xFFFF } else { t.mix_cur.clamp(0, 0xFFFF) as u32 };
+                (((v * PAN[0x28 - pan]) / 0x7F * mix) >> 16, ((v * PAN[pan]) / 0x7F * mix) >> 16)
+            }
+        };
         let voice = &mut self.spu.voices[i];
         voice.vol_l = l.min(0x3FFF) as i32;
         voice.vol_r = r.min(0x3FFF) as i32;
@@ -1137,12 +1327,13 @@ impl Sequencer {
     }
 }
 
-/// What a [`Player`] should play: song (0 = silence) and music level,
-/// changed from another thread.
+/// What a [`Player`] should play: song (0 = silence), music level and
+/// sound effects, set from another thread.
 #[derive(Default)]
 pub struct Control {
     song: AtomicU32,
     level: AtomicU32,
+    effects: std::sync::Mutex<Vec<u32>>,
 }
 
 impl Control {
@@ -1154,15 +1345,22 @@ impl Control {
     pub fn song(&self) -> u32 {
         self.song.load(Ordering::Relaxed)
     }
+
+    /// Queues sound effect `cmd` (`pan << 18 | volume << 12 | id`).
+    pub fn effect(&self, cmd: u32) {
+        if let Ok(mut q) = self.effects.lock() {
+            q.push(cmd);
+        }
+    }
 }
 
-/// Streams the songs of a pack live (interleaved stereo at 48 kHz): a new
-/// song starts from its beginning, a new level reaches the playing song's
-/// tracks as the driver's level commands do.
+/// Streams a pack live (interleaved stereo at 48 kHz): a new song starts
+/// from its beginning, a new level reaches the playing song's tracks as the
+/// driver's level commands do, and queued effects start on the next tick.
 pub struct Player {
     pack: Arc<Pack>,
     control: Arc<Control>,
-    seq: Option<Sequencer>,
+    seq: Sequencer,
     song: u32,
     buf: Vec<i16>,
     pos: usize,
@@ -1170,7 +1368,7 @@ pub struct Player {
 
 impl Player {
     pub fn new(pack: Arc<Pack>, control: Arc<Control>) -> Self {
-        Player { pack, control, seq: None, song: 0, buf: Vec::new(), pos: 0 }
+        Player { seq: Sequencer::new(pack.clone(), 0), pack, control, song: 0, buf: Vec::new(), pos: 0 }
     }
 
     /// The next sample (left, right, left, ...).
@@ -1187,22 +1385,19 @@ impl Player {
         self.buf.clear();
         self.pos = 0;
         let song = self.control.song();
-        let level = self.control.level.load(Ordering::Relaxed) as i32;
+        self.seq.level = self.control.level.load(Ordering::Relaxed) as i32;
         if song != self.song {
             self.song = song;
-            self.seq = (song != 0 && song <= self.pack.song_count()).then(|| Sequencer::new(self.pack.clone(), song, level as u8));
+            self.seq.start_song(song);
         }
-        match &mut self.seq {
-            Some(seq) => {
-                seq.level = level;
-                seq.tick();
-                seq.spu.mix(&self.pack.spu, TICK_SAMPLES, &mut self.buf);
-            }
-            None => self.buf.resize(TICK_SAMPLES * 2, 0),
+        let effects = self.control.effects.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+        for cmd in effects {
+            self.seq.play_effect(cmd);
         }
+        self.seq.tick();
+        self.seq.spu.mix(&self.pack.spu, TICK_SAMPLES, &mut self.buf);
     }
 }
-
 /// Interleaved stereo samples as a WAV file.
 pub fn wav(samples: &[i16]) -> Vec<u8> {
     crate::vox::Clip { channels: 2, rate: RATE, samples: samples.to_vec(), frames: 0 }.wav()

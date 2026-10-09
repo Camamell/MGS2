@@ -631,6 +631,7 @@ pub fn think(
                     let muzzle = body.pos + Vec3::Y * MUZZLE + body.forward() * 400.0;
                     let at = snake_pos + Vec3::Y * (snake_height * 0.6);
                     bullet::fire(&mut commands, &mut rng, muzzle, at);
+                    crate::sfx::play(crate::sfx::USP, Some(body.pos));
                 }
             }
             PhaseKind::Evasion => {

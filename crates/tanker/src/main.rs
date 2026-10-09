@@ -13,6 +13,7 @@ mod contact;
 mod crowd;
 mod demo;
 mod music;
+mod sfx;
 mod gcl;
 mod guard;
 mod items;
@@ -195,6 +196,8 @@ pub struct Game {
     pub crowd_sight: (f32, f32),
     /// Spoken line playing: (id, proc to run after, seconds left).
     pub speech: Option<(u32, Option<u32>, f32)>,
+    /// Sound driver commands from the script, for `music::update`.
+    pub sound_cmds: Vec<u32>,
     /// Digital camera targets and the proc run after each photo.
     pub photos: Vec<gcl::PhotoTarget>,
     pub photo_done: Option<u32>,
@@ -629,6 +632,7 @@ fn prepare(
         crowd_procs: crowd_procs.0,
         crowd_sight: crowd_procs.1,
         speech: None,
+        sound_cmds: Vec::new(),
         photos: photos.0,
         photo_done: photos.1,
         hang_lines: Vec::new(),
@@ -785,6 +789,7 @@ fn main() -> Result<()> {
     app.add_systems(Update, (codec::input, codec::screen, codec::voice).chain().run_if(demo::idle));
     app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
+    app.add_systems(Update, sfx::footsteps.run_if(demo::idle).run_if(codec::idle));
     app.init_resource::<photo::PhotoMode>()
         .add_systems(Startup, photo::setup_hud)
         .add_systems(
@@ -993,6 +998,7 @@ fn doors(
     };
     let Some(door) = door else { return };
     let proc = game.doors[door].on_open;
+    sfx::play(sfx::DOOR, Some((game.doors[door].a + game.doors[door].b) * 0.5));
     info!("door {door}: opened");
     script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(proc, &[0]), &level, &bullets);
 }
@@ -1242,6 +1248,7 @@ fn apply_codec(game: &mut Game, reqs: &[gcl::CodecReq]) {
             CodecReq::Then { id, then } => game.codec_calls.push((14112, id, then)),
             CodecReq::Speech { id, then } => game.speech = Some((id, then, SPEECH_SECONDS)),
             CodecReq::Reset => game.codec_area = None,
+            CodecReq::Sound(c) => game.sound_cmds.push(c),
         }
     }
 }

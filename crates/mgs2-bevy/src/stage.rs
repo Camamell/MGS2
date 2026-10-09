@@ -69,6 +69,9 @@ pub struct StageData {
     pub resident: Option<Vec<u8>>,
     /// The stage's sound pack (page `0x7F000010`, see `mgs2_formats::sd`).
     pub sound: Option<Vec<u8>>,
+    /// The chapter resident's sound pack (common samples and effects),
+    /// loaded before the stage's.
+    pub resident_sound: Option<Vec<u8>>,
     pub warnings: Vec<String>,
 }
 
@@ -113,6 +116,7 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
         script: None,
         resident: None,
         sound: stage.pages.iter().find(|p| p.kind == 0x7F00_0010).map(|p| p.data.clone()),
+        resident_sound: resident.pages.iter().find(|p| p.kind == 0x7F00_0010).map(|p| p.data.clone()),
         warnings: Vec::new(),
     };
     let level = str_code(name.as_bytes());

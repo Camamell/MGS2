@@ -134,6 +134,7 @@ impl Player {
     pub fn damage(&mut self, amount: i32) {
         self.life -= amount;
         self.hurt = 0.25;
+        crate::sfx::play(crate::sfx::HURT, None);
         if self.life <= 0 && self.rations > 0 {
             self.rations -= 1;
             self.life = if self.very_easy { self.max_life } else { self.max_life / 2 };
@@ -281,6 +282,9 @@ pub fn control(
             *ammo -= 1;
             let f = body.forward();
             crate::bullet::fire_dart(&mut commands, body.pos + Vec3::Y * MUZZLE + f * 400.0, f);
+            crate::sfx::play(crate::sfx::M9, Some(body.pos));
+        } else {
+            crate::sfx::play(crate::sfx::EMPTY, Some(body.pos));
         }
     }
 

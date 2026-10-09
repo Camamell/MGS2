@@ -105,7 +105,8 @@ What works:
 - Stage music from the game's own sound driver: a port of its sequencer
   plays the stage's songs from their sequences and samples, switching with
   the alert phase as `bgmanage.c` does (`re/notes/sound.md`; not yet checked
-  by ear against the game, and no sound effects yet).
+  by ear against the game), and its sound effects: the M9, guards' and Olga's
+  shots, doors, damage, footsteps and the alert sting, placed by the camera.
 - Rain on the open decks where the stage script sets it up (`rain.c`:
   streaks around the camera, not where its boxes exclude it).
 - The stage scripts' own cameras (follow-in-box and fixed, switched by traps)

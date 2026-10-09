@@ -17,6 +17,7 @@ use mgs2_formats::sd::{Control, Pack, Player};
 use mgs2_formats::str_code;
 
 use crate::Game;
+use mgs2_bevy::scene::SCALE;
 use crate::guard::{Phase, PhaseKind};
 
 /// `bgmanage.c`'s actor name.
@@ -61,7 +62,7 @@ impl Decodable for SdMusic {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_audio_source::<SdMusic>().add_systems(Update, update);
+    app.add_audio_source::<SdMusic>().init_resource::<Sound>().add_systems(Update, update);
 }
 
 /// Whether a stage script starts the music manager.
@@ -81,48 +82,86 @@ fn has_manager(script: &Gcx) -> bool {
 #[derive(Component)]
 struct MusicPlayer;
 
-/// The music of the stage being played.
-#[derive(Default)]
-struct Playing {
+/// The sound driver of the stage being played: its music and effects.
+#[derive(Resource, Default)]
+pub struct Sound {
     stage: String,
+    managed: bool,
     control: Option<Arc<Control>>,
 }
 
-/// Starts a stage's music when it loads and follows the alert phase.
+impl Sound {
+    /// Plays sound effect `id` at full volume, centred.
+    pub fn effect(&self, id: u32) {
+        self.command(0x20 << 18 | 0x3F << 12 | id);
+    }
+
+    /// A raw driver command (`#f2eedc -c`): effects (high byte 0) play; the
+    /// rest (fades, song control) is not modelled.
+    pub fn command(&self, cmd: u32) {
+        if cmd >> 24 == 0
+            && cmd & 0x7FF != 0
+            && let Some(c) = &self.control
+        {
+            debug!("sound effect {:#x} vol {} pan {}", cmd & 0x7FF, (cmd >> 12) & 0x3F, (cmd >> 18) & 0x3F);
+            c.effect(cmd);
+        }
+    }
+}
+
+/// Starts a stage's sound driver when it loads; the music follows the alert
+/// phase.
 fn update(
     mut commands: Commands,
-    game: Res<Game>,
+    mut game: ResMut<Game>,
     phase: Option<Res<Phase>>,
     cutscene: Res<crate::demo::Cutscene>,
     mut assets: ResMut<Assets<SdMusic>>,
     players: Query<Entity, With<MusicPlayer>>,
-    mut playing: Local<Playing>,
+    mut sound: ResMut<Sound>,
+    mut last: Local<Option<PhaseKind>>,
+    cams: Query<&GlobalTransform, With<crate::player::FollowCam>>,
 ) {
-    if playing.stage != game.data.name {
+    if sound.stage != game.data.name {
         for e in &players {
             commands.entity(e).despawn();
         }
-        playing.stage = game.data.name.clone();
-        playing.control = None;
-        let managed = game.data.script.as_ref().is_some_and(has_manager);
-        if let (true, Some(bytes)) = (managed, game.data.sound.as_ref()) {
-            match Pack::parse(bytes) {
+        sound.stage = game.data.name.clone();
+        sound.control = None;
+        sound.managed = game.data.script.as_ref().is_some_and(has_manager);
+        if let Some(bytes) = game.data.sound.as_ref() {
+            match Pack::with_resident(game.data.resident_sound.as_deref(), bytes) {
                 Some(pack) => {
-                    info!("music: {} has {} songs", game.data.name, pack.song_count());
+                    info!("sound: {} has {} songs (music {})", game.data.name, pack.song_count(), if sound.managed { "on" } else { "off" });
                     let control = Arc::new(Control::default());
                     let handle = assets.add(SdMusic { pack: Arc::new(pack), control: control.clone() });
                     commands.spawn((AudioPlayer(handle), PlaybackSettings::LOOP.with_volume(bevy::audio::Volume::Linear(0.7)), MusicPlayer));
-                    playing.control = Some(control);
+                    sound.control = Some(control);
                 }
-                None => warn!("music: {}: unreadable sound pack", game.data.name),
+                None => warn!("sound: {}: unreadable sound pack", game.data.name),
             }
         }
     }
-    let Some(control) = &playing.control else { return };
-    let (song, level) = if cutscene.active() {
+    for c in std::mem::take(&mut game.sound_cmds) {
+        sound.command(c);
+    }
+    if let Ok(cam) = cams.single() {
+        let (listener, right) = (cam.translation() / SCALE, cam.right().as_vec3());
+        for c in crate::sfx::drain(listener, right) {
+            sound.command(c);
+        }
+    }
+    let kind = phase.map_or(PhaseKind::Infiltration, |p| p.kind);
+    // bgmanage plays the alert sting (effect 0x2a) as the alert starts.
+    if kind == PhaseKind::Alert && last.is_some_and(|k| k != PhaseKind::Alert) {
+        sound.effect(0x2A);
+    }
+    *last = Some(kind);
+    let Some(control) = &sound.control else { return };
+    let (song, level) = if cutscene.active() || !sound.managed {
         (0, 0)
     } else {
-        match phase.map_or(PhaseKind::Infiltration, |p| p.kind) {
+        match kind {
             PhaseKind::Infiltration => (5, 1),
             PhaseKind::Alert => (2, 2),
             PhaseKind::Evasion => (3, 3),

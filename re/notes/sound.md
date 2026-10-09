@@ -83,3 +83,25 @@ song 5 + level 1; alert -> SE 0x2a, song 2 + level 2; evasion -> song 3 +
 level 3; caution -> song 4; with flag `DAT_0017f48c & 1` song 1 + level 4.
 `bgmfader.c` (`cmd_62b1fd`) boxes fade single tracks by area (`-t track
 -a x y z w h d "~stage"...`); not ported.
+
+## Sound effects
+
+- Command `pan << 18 | volume << 12 | id` (high byte 0), queued to
+  `FUN_00010004`: ids under 0x100 use the resident table (`r_tnk0`'s pack,
+  whose effect section starts with an `fe fe` map), ids from 0x100 the stage
+  map (section 2's first 0x800 bytes: id - 0x100 -> entry). Entry (16
+  bytes): priority, track count (up to 3), kind (nonzero: volume and pan
+  from the command through the 65-step curve at 0x1aa78), group, three
+  sequence offsets (from 0x1000 after the table). They play on 12 effect
+  tracks (0x20-0x2b) with the song engine.
+- Wave banks with a table offset of 0x1000 and up are kept in IOP memory
+  (0x1ba70) and streamed into SPU 0x9020 + channel * 0x1000 when an effect
+  track keys one on (`FUN_000121e0`); the resident bank (offset 0) fills tones
+  0..0x93, and its entries past the first address drop become the drum
+  tones 0x200+.
+- Game calls: `FUN_00114b30(pan, volume, id)` direct, `FUN_00114ce8(id,
+  position, mode)` positional (pan and volume from the camera,
+  `FUN_00114a10`). Tanker ids seen: usp.c fires 0x52 (weapon 0, the M9),
+  1 (USP/SOCOM), 0x30, 0xa7-0xaa by weapon, 4 when empty; wt_door.c 0x6f;
+  raiden.c 7 / 8 (footsteps; 0x589 / 0x58a under a flag), 0x19 / 0x1a / 0x25
+  when hurt; bgmanage 0x2a on alert; menus 0x14 / 0x15 / 0x17 / 0x22 / 0x23.
