@@ -102,6 +102,10 @@ What works:
   door or into an exit area loads the next stage with Snake where the
   script puts him (after his walk-in). Difficulty settings come from the
   title screen's script.
+- Stage music from the game's own sound driver: a port of its sequencer
+  plays the stage's songs from their sequences and samples, switching with
+  the alert phase as `bgmanage.c` does (`re/notes/sound.md`; not yet checked
+  by ear against the game, and no sound effects yet).
 - Rain on the open decks where the stage script sets it up (`rain.c`:
   streaks around the camera, not where its boxes exclude it).
 - The stage scripts' own cameras (follow-in-box and fixed, switched by traps)
