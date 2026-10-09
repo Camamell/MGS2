@@ -62,6 +62,7 @@ pub fn setup(
     fields: Query<Entity, With<RainField>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut started: Local<String>,
 ) {
     if !game.is_changed() {
         return;
@@ -70,6 +71,11 @@ pub fn setup(
         commands.entity(e).despawn();
     }
     let Some(spec) = &game.rain else { return };
+    // rain.c starts the rain loop (effect 0x1d4) with the first field.
+    if *started != game.data.name {
+        *started = game.data.name.clone();
+        crate::sfx::play(crate::sfx::RAIN, None);
+    }
     let mut seed = 0x1234_5678;
     let drops = (0..spec.drops)
         .map(|_| Vec3::new(rand(&mut seed) * 2.0 - 1.0, rand(&mut seed) * 2.0 - 1.0, rand(&mut seed) * 2.0 - 1.0) * HALF)

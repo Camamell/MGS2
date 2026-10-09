@@ -111,4 +111,7 @@ songs 1-3 are one piece whose `f8` commands raise different track sets.
   `FUN_00114a10`). Tanker ids seen: usp.c fires 0x52 (weapon 0, the M9),
   1 (USP/SOCOM), 0x30, 0xa7-0xaa by weapon, 4 when empty; wt_door.c 0x6f;
   raiden.c 7 / 8 (footsteps; 0x589 / 0x58a under a flag), 0x19 / 0x1a / 0x25
-  when hurt; bgmanage 0x2a on alert; menus 0x14 / 0x15 / 0x17 / 0x22 / 0x23.
+  when hurt; item_box.c 0x16 taken, 0xb can't carry, 0xd / 0x48 / 0xa1 box
+  sounds; rain.c starts the rain loop 0x1d4 once (raw command); bgmanage 0x2a
+  on alert; menus 0x14 / 0x15 / 0x17 / 0x22 / 0x23. Guards' gunfire was not
+  found among these calls (the port uses the USP's 1).

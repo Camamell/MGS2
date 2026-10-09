@@ -116,6 +116,8 @@ pub fn pickup(
         inv.taken.insert((game.data.name.clone(), item.name));
         inv.message = Some((format!("{} x{}", name(item.kind, item.id), item.count), 2.5));
         commands.entity(e).despawn();
+        // item_box.c: 0x16 when an item is taken.
+        crate::sfx::play(crate::sfx::PICKUP, Some(item.pos));
     }
     // Rations live in the inventory; the revive uses an equipped one.
     player.rations = if inv.ration_equipped { inv.counts.get(&(0, 1)).copied().unwrap_or(0).max(0) as u32 } else { 0 };

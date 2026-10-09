@@ -207,7 +207,8 @@ fn update(
             }
         }
     }
-    for c in std::mem::take(&mut game.sound_cmds) {
+    // Without marking Game changed (stage systems key off that).
+    for c in std::mem::take(&mut game.bypass_change_detection().sound_cmds) {
         sound.command(c);
     }
     if let Ok(cam) = cams.single() {

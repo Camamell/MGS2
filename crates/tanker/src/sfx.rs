@@ -4,7 +4,7 @@
 //! the queue is turned into driver commands with pan and volume from the
 //! camera, as `FUN_00114ce8` does. Ids (from the Tanker resident's calls):
 //! 0x52 the M9, 1 the USP, 4 an empty gun, 0x6f a door, 0x19 Snake hurt,
-//! 7 / 8 footsteps, 0x2a the alert sting.
+//! 7 / 8 footsteps, 0x16 an item taken, 0x2a the alert sting.
 
 use std::sync::Mutex;
 
@@ -15,6 +15,8 @@ pub const USP: u32 = 0x01;
 pub const DOOR: u32 = 0x6F;
 pub const HURT: u32 = 0x19;
 pub const EMPTY: u32 = 0x04;
+pub const PICKUP: u32 = 0x16;
+pub const RAIN: u32 = 0x1D4;
 const STEPS: [u32; 2] = [0x07, 0x08];
 
 static QUEUE: Mutex<Vec<(u32, Option<Vec3>, f32)>> = Mutex::new(Vec::new());
