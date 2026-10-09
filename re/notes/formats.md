@@ -412,3 +412,6 @@ sound-bank pages.
   alpha 0x80 opaque, over the difference of two 60 Hz frame stamps),
   0x10fff00.. demo control); `+0x14` 0 runs it once with the parameters
   from `+0x20`, 1 creates an actor.
+## lt2 lighting
+
+See `crates/mgs2-formats/src/lt2.rs` for the layout. The per-vertex formulas come from the VU0 micro programs that `FUN_0012b1d0` calls (MPG of 190 instructions in the VIF0 packet at `0x196020`; `vcallms` 0x00 directional + ambient, 0x10 point, 0x20 spot, 0x50 strip, 0x30 shadow sphere). Constants: `0x1b02a0` = (1, 1, 1, 255) (axis weights, clamp), `0x1b02b0` = (1.5, -0.75) (the 1.5 point/spot gain). Model normals point inwards (checked on Snake's parts), so lights use `n . (vertex - light)` and the directional `n . dir` with dir the direction the light travels. Map models have no vertex colours of their own.

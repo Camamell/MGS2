@@ -131,6 +131,51 @@ pub fn model_meshes(model: &kms::Model) -> Vec<(u32, Mesh, Part)> {
     out
 }
 
+/// Gives a map piece's meshes the vertex colours its lt2 lighting gives them
+/// (`mgs2_formats::lt2`; the models have none of their own). `at` is the
+/// piece's placement (translation in metres, as on its entity). Colours are
+/// scaled so 128 = 1.0.
+pub fn light_meshes(model: &kms::Model, parts: &mut [(u32, Mesh, Part)], lt2: &mgs2_formats::lt2::Lt2, place: Transform) {
+    let (rot, at) = (place.rotation, place.translation / SCALE);
+    use bevy::mesh::VertexAttributeValues as V;
+    let objects = parts.iter().map(|p| p.2.object).max().map_or(0, |m| m + 1);
+    for o in 0..objects.min(model.objects.len()) {
+        let world = |m: &Mesh| -> Vec<Vec3> {
+            match m.attribute(Mesh::ATTRIBUTE_POSITION) {
+                Some(V::Float32x3(p)) => p.iter().map(|v| rot * Vec3::from(*v) / SCALE + at).collect(),
+                _ => Vec::new(),
+            }
+        };
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for (_, m, _) in parts.iter().filter(|p| p.2.object == o) {
+            for p in world(m) {
+                lo = lo.min(p);
+                hi = hi.max(p);
+            }
+        }
+        if lo.x > hi.x {
+            continue;
+        }
+        let lights = lt2.gather(lo.into(), hi.into());
+        for (_, m, _) in parts.iter_mut().filter(|p| p.2.object == o) {
+            let pos = world(m);
+            let nrm: Vec<[f32; 3]> = match m.attribute(Mesh::ATTRIBUTE_NORMAL) {
+                Some(V::Float32x3(n)) => n.clone(),
+                _ => vec![[0.0, 1.0, 0.0]; pos.len()],
+            };
+            let col: Vec<[f32; 4]> = pos
+                .iter()
+                .zip(&nrm)
+                .map(|(p, n)| {
+                    let c = lt2.shade((*p).into(), (rot * Vec3::from(*n)).into(), &lights);
+                    [c[0] / 128.0, c[1] / 128.0, c[2] / 128.0, 1.0]
+                })
+                .collect();
+            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+        }
+    }
+}
+
 /// Spawns a model as children of a new entity and returns that entity.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_model(
@@ -146,6 +191,34 @@ pub fn spawn_model(
 ) -> Entity {
     let parent = commands.spawn((root, Transform::default(), Visibility::default())).id();
     for (tex, mesh, part) in model_meshes(model) {
+        let mat = cache.get(tex, data, images, materials, unlit);
+        let child = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), part)).id();
+        commands.entity(parent).add_child(child);
+    }
+    parent
+}
+
+/// [`spawn_model`] for a model placed at `place`, lit by the stage's lighting
+/// (its first lt2; gameplay stages have one) the way map pieces are.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_model_lit(
+    commands: &mut Commands,
+    model: &kms::Model,
+    data: &StageData,
+    cache: &mut MaterialCache,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+    unlit: bool,
+    root: impl Bundle,
+    place: Transform,
+) -> Entity {
+    let mut parts = model_meshes(model);
+    if let Some((_, l)) = data.lights.first().filter(|_| std::env::var_os("MGS2_NO_LT2").is_none()) {
+        light_meshes(model, &mut parts, l, place);
+    }
+    let parent = commands.spawn((root, place, Visibility::default())).id();
+    for (tex, mesh, part) in parts {
         let mat = cache.get(tex, data, images, materials, unlit);
         let child = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), part)).id();
         commands.entity(parent).add_child(child);
@@ -169,8 +242,18 @@ pub fn spawn_level(
     let mut out = Vec::new();
     for piece in &data.pieces {
         let Some((_, model)) = data.models.iter().find(|(h, _)| *h == piece.model) else { continue };
-        let e = spawn_model(commands, model, data, cache, meshes, images, materials, unlit, marker.clone());
-        commands.entity(e).insert(Transform::from_translation(Vec3::from(piece.position) * SCALE));
+        let place = Transform::from_translation(Vec3::from(piece.position) * SCALE);
+        let mut parts = model_meshes(model);
+        let lt2 = piece.lt2.and_then(|h| data.lights.iter().find(|(x, _)| *x == h)).map(|(_, l)| l);
+        if let Some(l) = lt2.filter(|_| std::env::var_os("MGS2_NO_LT2").is_none()) {
+            light_meshes(model, &mut parts, l, place);
+        }
+        let e = commands.spawn((marker.clone(), place, Visibility::default())).id();
+        for (tex, mesh, part) in parts {
+            let mat = cache.get(tex, data, images, materials, unlit);
+            let child = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), part)).id();
+            commands.entity(e).add_child(child);
+        }
         out.push(e);
     }
     out

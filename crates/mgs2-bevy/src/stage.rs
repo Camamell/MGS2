@@ -37,6 +37,8 @@ pub struct MapPiece {
     /// Collision area index (`-h <hzx> <area>`); not used by the viewer yet.
     #[allow(dead_code)]
     pub hzx_area: Option<i32>,
+    /// Its lighting (`-l <lt2>`).
+    pub lt2: Option<u32>,
 }
 
 /// A player entry point set by a stage-script proc before Snake is created
@@ -62,6 +64,8 @@ pub struct StageData {
     pub motions: Vec<(u32, mar::Mar)>,
     /// (file name hash, skinned cutscene mesh).
     pub evms: Vec<(u32, mgs2_formats::evm::Model)>,
+    /// (file name hash, lighting).
+    pub lights: Vec<(u32, mgs2_formats::lt2::Lt2)>,
     /// The stage script (`scenerio.gcx`).
     pub script: Option<gcx::Gcx>,
     /// The stage's resident code image (type-1 file, loaded at 0x1F1480):
@@ -113,6 +117,7 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
         collision: None,
         motions: Vec::new(),
         evms: Vec::new(),
+        lights: Vec::new(),
         script: None,
         resident: None,
         sound: stage.pages.iter().find(|p| p.kind == 0x7F00_0010).map(|p| p.data.clone()),
@@ -152,6 +157,10 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
                 Ok(m) => data.evms.push((f.name_hash(), m)),
                 Err(e) => data.warnings.push(format!("{what}: {e}")),
             },
+            11 if data.lights.iter().all(|(h, _)| *h != f.name_hash()) => match mgs2_formats::lt2::parse(bytes) {
+                Ok(l) => data.lights.push((f.name_hash(), l)),
+                Err(e) => data.warnings.push(format!("{what}: {e}")),
+            },
             1 if data.resident.is_none() => data.resident = Some(bytes.to_vec()),
             6 if f.name_hash() == str_code(b"scenerio") => match gcx::parse(bytes) {
                 Ok(g) => {
@@ -176,7 +185,7 @@ pub fn load(disc: &mut Disc, name: &str) -> Result<StageData> {
         new
     });
     if data.pieces.is_empty() && data.models.iter().any(|(h, _)| *h == level) {
-        data.pieces.push(MapPiece { model: level, position: [0.0; 3], hzx_area: None });
+        data.pieces.push(MapPiece { model: level, position: [0.0; 3], hzx_area: None, lt2: None });
     }
     // Level geometry first, then the rest by hash for a stable browse order.
     let is_level = |h: u32| data.pieces.iter().any(|p| p.model == h);
@@ -289,11 +298,16 @@ fn collect_pieces(stmts: &[Stmt], out: &mut Vec<MapPiece>) {
                 _ => None,
             };
             let area = opt(b'h').and_then(|h| int(h.get(1)));
+            let lt2 = opt(b'l').and_then(|l| match l.first() {
+                Some(Value::Name(h)) => Some(*h),
+                Some(Value::Int(_, i)) => Some(*i as u32),
+                _ => None,
+            });
             // A piece may list several models, each `-k <model> [x y z]`.
             for (_, vals) in options.iter().filter(|(l, _)| *l == b'k') {
                 if let [Value::Name(model), rest @ ..] = vals.as_slice() {
                     let p = [0, 1, 2].map(|i| int(rest.get(i)).unwrap_or(0) as f32);
-                    out.push(MapPiece { model: *model, position: p, hzx_area: area });
+                    out.push(MapPiece { model: *model, position: p, hzx_area: area, lt2 });
                 }
             }
         }

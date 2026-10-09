@@ -107,6 +107,10 @@ What works:
   the alert phase as `bgmanage.c` does (`re/notes/sound.md`; not yet checked
   by ear against the game), and its sound effects: the M9, guards' and Olga's
   shots, doors, damage, footsteps and the alert sting, placed by the camera.
+- Stage lighting from the stage's `.lt2`, as the game computes it on VU0:
+  ambient and a directional light plus point, spot and strip lights and
+  shadow spheres, per vertex, on the map, props and (assumed the same way)
+  the characters (`mgs2_formats::lt2`; `MGS2_NO_LT2=1` to compare unlit).
 - The sea around the ship from the stage script's `wave2.c` (its textures,
   height and lighting; the swell is approximated).
 - Each stage's fog (`chara #a53aa7`: colour, near and far), the distant

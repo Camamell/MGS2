@@ -134,10 +134,26 @@ pub fn skin(
             b.frame = b.frame.min(m.length.saturating_sub(1) as f32);
         }
         let mats = anim::pose(model, motion, b.frame, false);
+        // Lit by the stage's lt2 like the map (assumed: the same per-vertex
+        // lights at the body's current place).
+        let lt2 = game.data.lights.first().map(|(_, l)| l).filter(|_| std::env::var_os("MGS2_NO_LT2").is_none());
+        let reach = Vec3::splat(2000.0);
+        let lights = lt2.map(|l| l.gather((b.pos - reach).into(), (b.pos + reach).into())).unwrap_or_default();
         for child in children.iter_descendants(e) {
             let Ok((part, mesh3d)) = parts.get(child) else { continue };
             let Some(mut mesh) = meshes.get_mut(&mesh3d.0) else { continue };
             let (pos, nrm) = anim::skin(model, part.object, part.mesh, &mats);
+            if let Some(l) = lt2 {
+                let col: Vec<[f32; 4]> = pos
+                    .iter()
+                    .zip(&nrm)
+                    .map(|(p, n)| {
+                        let c = l.shade((t.rotation * Vec3::from(*p) + b.pos).into(), (t.rotation * Vec3::from(*n)).into(), &lights);
+                        [c[0] / 128.0, c[1] / 128.0, c[2] / 128.0, 1.0]
+                    })
+                    .collect();
+                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+            }
             let pos: Vec<[f32; 3]> = pos.into_iter().map(|v| (Vec3::from(v) * SCALE).into()).collect();
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);

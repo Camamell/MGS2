@@ -931,7 +931,12 @@ fn spawn_level(
     scene::spawn_level(&mut commands, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
     for p in cast.props {
         let model = &data.models[p.model].1;
-        let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        // The skyline far off is not lit by the ship's lights.
+        let e = if p.no_fog {
+            scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity)
+        } else {
+            scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, p.transform)
+        };
         commands.entity(e).insert(p.transform);
         if p.no_fog {
             commands.entity(e).insert(fog::NoFog);
@@ -939,7 +944,7 @@ fn spawn_level(
     }
     for (p, door) in cast.sliding {
         let model = &data.models[p.model].1;
-        let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        let e = scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, p.transform);
         commands.entity(e).insert((p.transform, door));
     }
     for (item, model) in cast.items {
@@ -948,7 +953,7 @@ fn spawn_level(
         }
         let model = &data.models[model].1;
         let at = Transform::from_translation(item.pos * SCALE);
-        let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        let e = scene::spawn_model_lit(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity, at);
         commands.entity(e).insert((at, item));
     }
     let mut spawn = |commands: &mut Commands, model: usize, bundle: Body| {
