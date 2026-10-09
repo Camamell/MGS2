@@ -17,6 +17,7 @@ mod music;
 mod sea;
 mod sfx;
 mod timer;
+mod fog;
 mod gcl;
 mod guard;
 mod items;
@@ -193,6 +194,8 @@ pub struct Game {
     pub rain: Option<rain::RainSpec>,
     /// The holds' time limit, when the stage runs one.
     pub timer: Option<timer::Timer>,
+    /// The stage's fog (`chara #a53aa7`).
+    pub fog: Option<fog::FogSpec>,
     /// The script ended the game (`load ... -g`).
     pub game_over: bool,
     /// The variables as the stage started (a continue goes back to them).
@@ -273,6 +276,8 @@ struct Cast {
 struct Prop {
     model: usize,
     transform: Transform,
+    /// Drawn without fog (the distant skyline).
+    no_fog: bool,
 }
 
 const PROP_ACTORS: &[u32] = &[0x7A8EC1, 0xD1279A, 0xCBA568];
@@ -294,7 +299,7 @@ fn door_props(s: &gcl::Spawn, data: &StageData) -> Vec<Prop> {
         .filter_map(|m| {
             let hash = m.int()? as u32 & 0x00FF_FFFF;
             let model = data.models.iter().position(|(h, _)| *h & 0x00FF_FFFF == hash)?;
-            Some(Prop { model, transform })
+            Some(Prop { model, transform, no_fog: false })
         })
         .collect()
 }
@@ -321,7 +326,7 @@ fn sliding_door(s: &gcl::Spawn, data: &StageData) -> Option<(Prop, SlidingDoor)>
         scale: Vec3::ONE,
     };
     let width = s.opt_int(b's', 0).filter(|w| *w > 0).unwrap_or(1000) as f32 * SCALE;
-    Some((Prop { model, transform }, SlidingDoor { closed: transform, slide: transform.rotation * Vec3::X * width, open: 0.0 }))
+    Some((Prop { model, transform, no_fog: false }, SlidingDoor { closed: transform, slide: transform.rotation * Vec3::X * width, open: 0.0 }))
 }
 
 /// Sliding doors open for anyone within 2 m and close again after.
@@ -360,6 +365,7 @@ fn skyline(s: &gcl::Spawn, data: &StageData) -> Vec<Prop> {
         .map(|x| Prop {
             model: idx,
             transform: Transform::from_translation(Vec3::new(*x, y, 0.0) * SKYLINE_SCALE * SCALE).with_scale(Vec3::splat(SKYLINE_SCALE)),
+            no_fog: true,
         })
         .collect()
 }
@@ -381,7 +387,7 @@ fn prop(s: &gcl::Spawn, data: &StageData) -> Option<Prop> {
         rotation: Quat::from_euler(EulerRot::YXZ, angle(1), angle(0), angle(2)),
         scale: Vec3::new(v(b's', 0, 100), v(b's', 1, 100), v(b's', 2, 100)) / 100.0,
     };
-    Some(Prop { model, transform })
+    Some(Prop { model, transform, no_fog: false })
 }
 
 /// A stage ready to be put into the world.
@@ -474,6 +480,7 @@ fn prepare(
     let mut on_alert = None;
     let mut rain_spec = None;
     let mut holds_timer = None;
+    let mut fog_spec = None;
     let mut crowd_procs = (Vec::new(), (2500.0, 7000.0));
     let mut cameras = script_cam::Cameras::default();
     let mut codec_reqs = Vec::new();
@@ -517,6 +524,7 @@ fn prepare(
         }
         rain_spec = vm.spawns.iter().find(|s| s.kind == rain::RAIN_ACTOR).and_then(rain::from_spawn);
         holds_timer = vm.spawns.iter().find(|s| s.kind == timer::TIMER_ACTOR).and_then(timer::Timer::from_spawn);
+        fog_spec = vm.spawns.iter().filter(|s| s.kind == fog::FOG_ACTOR).find_map(fog::from_spawn);
         let manager = vm.spawns.iter().find(|s| s.kind == guard::MANAGER_ACTOR);
         phase = Phase::from_manager(manager);
         on_alert = manager.and_then(|s| match s.opt(b'a')?.first()? {
@@ -640,6 +648,7 @@ fn prepare(
         arrivals: Vec::new(),
         rain: rain_spec,
         timer: holds_timer,
+        fog: fog_spec,
         game_over: false,
         start_banks: gcl::Banks::default(),
         crowd_alarm: false,
@@ -806,6 +815,7 @@ fn main() -> Result<()> {
     app.add_systems(Update, (codec::input, codec::screen, codec::voice).chain().run_if(demo::idle));
     app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound, demo::fade).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
+    app.add_systems(Update, (fog::apply, fog::unfog));
     app.add_systems(Startup, codec_face::setup_portraits).add_systems(Update, (codec_face::load, codec_face::show, codec_face::animate.after(codec_face::load)));
     if let [x, y, z, yaw, pitch] = cli.look[..] {
         let tf = Transform::from_translation(Vec3::new(x, y, z) * mgs2_bevy::scene::SCALE)
@@ -923,6 +933,9 @@ fn spawn_level(
         let model = &data.models[p.model].1;
         let e = scene::spawn_model(&mut commands, model, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
         commands.entity(e).insert(p.transform);
+        if p.no_fog {
+            commands.entity(e).insert(fog::NoFog);
+        }
     }
     for (p, door) in cast.sliding {
         let model = &data.models[p.model].1;

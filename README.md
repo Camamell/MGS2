@@ -109,6 +109,8 @@ What works:
   shots, doors, damage, footsteps and the alert sting, placed by the camera.
 - The sea around the ship from the stage script's `wave2.c` (its textures,
   height and lighting; the swell is approximated).
+- Each stage's fog (`chara #a53aa7`: colour, near and far), the distant
+  skyline exempt.
 - Rain on the open decks where the stage script sets it up (`rain.c`:
   streaks around the camera, not where its boxes exclude it).
 - The stage scripts' own cameras (follow-in-box and fixed, switched by traps)
