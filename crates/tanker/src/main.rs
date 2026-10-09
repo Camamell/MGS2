@@ -1328,11 +1328,16 @@ fn traps(
     }
 }
 
-/// How long a spoken line (`#7aa13a`) lasts. The voice data is not read
-/// yet, so every line gets the same time.
+/// How long a spoken line (`#7aa13a`) lasts when its clip cannot be read.
 const SPEECH_SECONDS: f32 = 8.0;
 
-/// Ends spoken lines after their time and runs their procs.
+/// The subtitles of the spoken line playing, and its audio.
+#[derive(Component)]
+struct SpeechPart;
+
+/// Plays spoken lines (voice and subtitles), ends them after their clip's
+/// length and runs their procs.
+#[allow(clippy::too_many_arguments)]
 fn speech(
     mut commands: Commands,
     time: Res<Time>,
@@ -1340,9 +1345,58 @@ fn speech(
     mut game: ResMut<Game>,
     level: LevelRoots,
     bullets: Query<Entity, With<bullet::Bullet>>,
+    codec_data: Option<Res<codec::CodecData>>,
+    mut sources: ResMut<Assets<AudioSource>>,
+    mut text: Query<&mut Text, With<SpeechPart>>,
+    parts: Query<Entity, With<SpeechPart>>,
+    mut playing: Local<Option<(u32, Vec<mgs2_formats::demo::Line>, f32)>>,
 ) {
+    let current = game.speech.map(|s| s.0);
+    if playing.as_ref().map(|p| p.0) != current {
+        for e in &parts {
+            commands.entity(e).despawn();
+        }
+        *playing = None;
+        if let (Some(id), Some(data)) = (current, codec_data.as_ref()) {
+            match data.clip(id) {
+                Ok((clip, lines)) => {
+                    let secs = clip.frames as f32 / demo::TICKS;
+                    let secs = if secs > 0.0 { secs } else { clip.samples.len() as f32 / f32::from(clip.channels) / clip.rate as f32 };
+                    info!("speech {id:#x}: {secs:.1} s, {} lines", lines.len());
+                    if let Some(s) = game.speech.as_mut() {
+                        s.2 = secs;
+                    }
+                    commands.spawn((AudioPlayer(sources.add(AudioSource { bytes: clip.wav().into() })), PlaybackSettings::DESPAWN, SpeechPart));
+                    commands.spawn((
+                        SpeechPart,
+                        Text::new(""),
+                        TextFont { font_size: bevy::text::FontSize::Px(22.0), ..default() },
+                        TextColor(Color::srgb(0.95, 0.95, 0.9)),
+                        TextLayout::justify(Justify::Center),
+                        Node { position_type: PositionType::Absolute, left: px(0), right: px(0), bottom: px(48), ..default() },
+                        GlobalZIndex(4),
+                    ));
+                    *playing = Some((id, lines, secs));
+                }
+                Err(e) => {
+                    warn!("speech {id:#x}: {e:#}");
+                    *playing = Some((id, Vec::new(), SPEECH_SECONDS));
+                }
+            }
+        }
+    }
     let Some((id, then, left)) = game.speech.as_mut() else { return };
     *left -= time.delta_secs();
+    if let Some((_, lines, total)) = playing.as_ref() {
+        let t = (total - *left) * demo::TICKS;
+        let line = lines.iter().rev().find(|l| l.start as f32 <= t && t <= l.end as f32);
+        for mut tx in &mut text {
+            let want = line.map_or("", |l| l.text.as_str());
+            if tx.0 != want {
+                tx.0 = want.to_string();
+            }
+        }
+    }
     if *left > 0.0 {
         return;
     }

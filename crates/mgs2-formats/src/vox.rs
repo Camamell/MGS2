@@ -87,7 +87,7 @@ pub fn decode_clip(data: &[u8]) -> Option<Clip> {
     let mut n = 0;
     while let (Some(kind), Some(size), Some(frame)) = (u32_le(data, pos), u32_le(data, pos + 4), u32_le(data, pos + 8)) {
         let size = size as usize;
-        if !(16..=0x10_0000).contains(&size) || pos + size > data.len() || (kind == 0x10 && n > 2) {
+        if !(16..=0x10_0000).contains(&size) || pos + size > data.len() || (kind == 0x10 && n > 0) {
             break;
         }
         let body = &data[pos + 16..pos + size];
@@ -107,7 +107,7 @@ pub fn decode_clip(data: &[u8]) -> Option<Clip> {
             _ => {}
         }
         pos += size;
-        n += 1;
+        n += usize::from(kind != 0x10);
     }
     if audio.is_empty() {
         return None;

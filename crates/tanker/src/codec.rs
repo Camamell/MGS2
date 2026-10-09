@@ -32,19 +32,45 @@ impl CodecData {
 
     /// A voice clip (`0x20000000 + sector` in VOX.DAT) as a WAV file.
     pub fn voice(&self, id: u32) -> anyhow::Result<Vec<u8>> {
+        Ok(self.clip(id)?.0.wav())
+    }
+
+    /// A spoken clip and its subtitles. `0x20000000 + sector` names a clip
+    /// in VOX.DAT, or, where none starts there, in MOVIE.DAT (the holds'
+    /// speech: the same chunks plus an IPU video stream).
+    pub fn clip(&self, id: u32) -> anyhow::Result<(mgs2_formats::vox::Clip, Vec<mgs2_formats::demo::Line>)> {
+        let sector = u64::from(id.wrapping_sub(0x2000_0000));
+        let mut bytes = Self::chunks(&self.iso, "MGS2/VOX.DAT", sector)?;
+        if bytes.is_empty() {
+            bytes = Self::chunks(&self.iso, "MGS2/MOVIE.DAT", sector)?;
+        }
+        let clip = mgs2_formats::vox::decode_clip(&bytes).ok_or_else(|| anyhow::anyhow!("no audio in voice {id:#x}"))?;
+        Ok((clip, mgs2_formats::demo::parse(&bytes).subtitles))
+    }
+
+    /// The chunks of the clip starting at `sector` of `file` (none if no
+    /// clip header is there).
+    fn chunks(iso: &std::path::Path, file: &str, sector: u64) -> anyhow::Result<Vec<u8>> {
         use std::io::{Seek, SeekFrom};
-        let mut f = mgs2_formats::iso::Iso::open(&self.iso)?.open_file("MGS2/VOX.DAT")?;
-        let mut pos = u64::from(id.wrapping_sub(0x2000_0000)) * 0x800;
+        let mut f = mgs2_formats::iso::Iso::open(iso)?.open_file(file)?;
+        let mut pos = sector * 0x800;
         let mut bytes = Vec::new();
         let mut head = [0u8; 8];
-        for n in 0..4096 {
+        f.seek(SeekFrom::Start(pos))?;
+        f.read_exact(&mut head)?;
+        if head != [0x10, 0, 0, 0, 0x10, 0, 0, 0] {
+            return Ok(bytes);
+        }
+        let mut seen = false;
+        for _ in 0..20_000 {
             f.seek(SeekFrom::Start(pos))?;
             f.read_exact(&mut head)?;
             let kind = u32::from_le_bytes(head[..4].try_into().unwrap());
             let size = u32::from_le_bytes(head[4..].try_into().unwrap()) as u64;
-            if !(16..=0x10_0000).contains(&size) || (kind == 0x10 && n > 2) {
+            if !(16..=0x10_0000).contains(&size) || (kind == 0x10 && seen) {
                 break;
             }
+            seen |= kind != 0x10;
             let mut chunk = vec![0u8; size as usize];
             f.seek(SeekFrom::Start(pos))?;
             f.read_exact(&mut chunk)?;
@@ -54,8 +80,7 @@ impl CodecData {
                 break;
             }
         }
-        let clip = mgs2_formats::vox::decode_clip(&bytes).ok_or_else(|| anyhow::anyhow!("no audio in voice {id:#x}"))?;
-        Ok(clip.wav())
+        Ok(bytes)
     }
 
     /// The record a stage script's codec id points at.

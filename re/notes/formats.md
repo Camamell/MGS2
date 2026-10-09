@@ -204,11 +204,19 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   (some clips), kind 4 subtitles (same records as DEMO.DAT), and an end
   chunk kind `0xf0` whose frame field is the clip's length. 3407 clips;
   `examples/vox_index.rs` lists them.
-- Some `#7aa13a` ids are `0x20000000 + sector`: w04c's "caught" line
-  `0x2000ddaa` is the clip at sector 0xddaa ("Huh!? / Stop!! / Freeze!!",
-  2815 frames). The commandant's speech ids (0x20000000, 0x200003b4, ...,
-  0x2000ab08) do not land on clip starts (0x3b4 is inside the clip at
-  sector 909), so their mapping is still open.
+- `#7aa13a` ids are `0x20000000 + sector`: w04c's "caught" line
+  `0x2000ddaa` is the clip at sector 0xddaa of VOX.DAT ("Huh!? / Stop!! /
+  Freeze!!"). The commandant's speech ids (0x200003b4, ..., 0x2000ab08) are
+  clips in MOVIE.DAT instead: the same chunk layout with four header
+  chunks, an IPU video stream (kind 0xf, payload magic `ipum`), 44100 Hz
+  stereo ADPCM (kind 1), lip sync (kind 5) and subtitles. No sector holds a
+  clip in both files, so the port tries VOX.DAT, then MOVIE.DAT.
+- The debug stage `select` lists every VOX.DAT clip by name (`chara
+  #fe6730 "test" -s "vc000000" 0x20000000 ...`, 3407 names). All are `vc`
+  voice clips; the long stereo ones are long conversations, not music.
+- Subtitle chunks: the leading u32 counts the record bytes after it
+  (records start at chunk +20). In the text, `0x80 '|'` breaks the line and
+  `0x80 '#' xx xx` is a control code.
 
 - Codec voices: a record's `#01e658 <id> { ... }` id is `0x20000000 +
   sector` of a VOX.DAT clip (checked for several record-125 lines).
@@ -236,7 +244,9 @@ Handler conditions (`FUN_00149FE8`) include `-b` (button), `-d dir range`
   left/right; each is a delta added to that channel's 16-bit sample
   (`FUN_00019ae4`): `m = b & 0x78`; if `b & 7 == 7` the delta is `m << 1`,
   else `((m | 0x80) << 7) >> (b & 7)`; bit 7 negates it. So `07` is
-  silence. A demo's audio is voices, music and effects mixed.## DEMO.DAT (cutscenes): cameras and actors decoded
+  silence. A demo's audio is voices, music and effects mixed.
+
+## DEMO.DAT (cutscenes): cameras and actors decoded
 
 - Not encrypted. Cutscene stages start demos with `chara "demo" <name> -i
   0x40000000 + n`; n is the demo's first sector (2048 bytes).

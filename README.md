@@ -129,14 +129,14 @@ What works:
   in formation where the script places them (`re/notes/formats.md`), and
   the Marines on watch in the holds use the guard AI with their own motions.
   A Marine in formation who sees Snake starts the script's own "caught"
-  sequence, which ends the game.
+  sequence, which ends the game. The commandant's speech and other spoken
+  lines play with their voices and subtitles (VOX.DAT / MOVIE.DAT).
 
 Assumptions (not taken from the game yet): the M9 starts with 15 darts,
 sleep and knock-out times, reload pause and fire range. In the holds, the
 camera is always available, a photo goes to the first empty album slot (else
-over the worst one), every line of the commandant's speech lasts 8 seconds
-(the voice data is not read), the speech running out does not end the game
-yet, and the Marines' slung rifles are not shown.
+over the worst one), the speech running out does not end the game yet, and
+the Marines' slung rifles are not shown.
 
 ## Viewer
 

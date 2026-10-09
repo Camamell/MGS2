@@ -18,14 +18,16 @@ fn main() {
         let mut pos = u64::from(id & 0x0FFF_FFFF) * 0x800;
         let mut bytes = Vec::new();
         let mut head = [0u8; 8];
-        for n in 0..50_000 {
+        let mut seen = false;
+        for _ in 0..50_000 {
             f.seek(SeekFrom::Start(pos)).unwrap();
             f.read_exact(&mut head).unwrap();
             let kind = u32::from_le_bytes(head[..4].try_into().unwrap());
             let size = u32::from_le_bytes(head[4..].try_into().unwrap()) as u64;
-            if !(16..=0x10_0000).contains(&size) || (kind == 0x10 && n > 2) {
+            if !(16..=0x10_0000).contains(&size) || (kind == 0x10 && seen) {
                 break;
             }
+            seen |= kind != 0x10;
             let mut chunk = vec![0u8; size as usize];
             f.seek(SeekFrom::Start(pos)).unwrap();
             f.read_exact(&mut chunk).unwrap();

@@ -116,11 +116,11 @@ pub fn extent(data: &[u8]) -> usize {
     let mut n = 0;
     while let (Some(kind), Some(size)) = (u32_at(data, pos), u32_at(data, pos + 4)) {
         let size = size as usize;
-        if !(16..=0x10_0000).contains(&size) || (kind == 0x10 && n > 2) {
+        if !(16..=0x10_0000).contains(&size) || (kind == 0x10 && n > 0) {
             break;
         }
         pos += size;
-        n += 1;
+        n += usize::from(kind != 0x10);
         if kind == 0xF0 {
             break;
         }
@@ -135,7 +135,7 @@ pub fn parse(data: &[u8]) -> Demo {
     let mut n = 0;
     while let (Some(kind), Some(size), Some(frame)) = (u32_at(data, pos), u32_at(data, pos + 4), u32_at(data, pos + 8)) {
         let size = size as usize;
-        if !(16..=0x10_0000).contains(&size) || pos + size > data.len() || (kind == 0x10 && n > 2) {
+        if !(16..=0x10_0000).contains(&size) || pos + size > data.len() || (kind == 0x10 && n > 0) {
             break;
         }
         let chunk = &data[pos..pos + size];
@@ -150,7 +150,7 @@ pub fn parse(data: &[u8]) -> Demo {
         }
         demo.length = demo.length.max(frame);
         pos += size;
-        n += 1;
+        n += usize::from(kind != 0x10);
     }
     demo
 }
@@ -243,7 +243,8 @@ fn actors(r: &[u8], frame: u32, demo: &mut Demo, state: &mut BTreeMap<u32, Actor
 /// length (with this header), text` where `0x80 '|'` breaks the line.
 fn subtitles(chunk: &[u8], out: &mut Vec<Line>) {
     let Some(payload) = u32_at(chunk, 16) else { return };
-    let end = (16 + payload as usize).min(chunk.len());
+    // The size counts the records, which start after it.
+    let end = (20 + payload as usize).min(chunk.len());
     let mut o = 20;
     while o + 16 <= end {
         let (Some(start), Some(stop), Some(len)) = (u32_at(chunk, o), u32_at(chunk, o + 4), u32_at(chunk, o + 12)) else { break };
@@ -252,7 +253,28 @@ fn subtitles(chunk: &[u8], out: &mut Vec<Line>) {
         }
         let text = &chunk[o + 16..(o + len as usize).min(end)];
         let text = text.split(|b| *b == 0).next().unwrap_or_default();
-        let text = String::from_utf8_lossy(text).replace("\u{fffd}|", "\n").replace('|', "\n");
+        // `0x80 '|'` breaks the line; `0x80 '#'` and two bytes is a control
+        // code that is not shown.
+        let mut clean = Vec::with_capacity(text.len());
+        let mut i = 0;
+        while i < text.len() {
+            match (text[i], text.get(i + 1)) {
+                (0x80, Some(b'|')) => {
+                    clean.push(b'\n');
+                    i += 2;
+                }
+                (0x80, Some(b'#')) => i += 4,
+                (b'|', _) => {
+                    clean.push(b'\n');
+                    i += 1;
+                }
+                (b, _) => {
+                    clean.push(b);
+                    i += 1;
+                }
+            }
+        }
+        let text = String::from_utf8_lossy(&clean).into_owned();
         out.push(Line { start, end: stop, text });
         o += len as usize;
     }
