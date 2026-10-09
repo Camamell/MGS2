@@ -143,16 +143,81 @@ pub fn hold(
     }
 }
 
+/// One mesh of a body: every kms mesh with the same texture, merged so a
+/// body updates a few mesh assets a frame instead of dozens.
+#[derive(Component)]
+pub struct BodyMesh {
+    /// (object, mesh) of each merged kms mesh, in vertex order.
+    segs: Vec<(usize, usize)>,
+}
+
+/// Spawns a character model as one merged mesh per texture.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_body(
+    commands: &mut Commands,
+    model: &mgs2_formats::kms::Model,
+    data: &mgs2_bevy::stage::StageData,
+    cache: &mut mgs2_bevy::scene::MaterialCache,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+    unlit: bool,
+    root: impl Bundle,
+) -> Entity {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues as V};
+    let parent = commands.spawn((root, Transform::default(), Visibility::default())).id();
+    let mut groups: Vec<(u32, Vec<(Mesh, Part)>)> = Vec::new();
+    for (tex, mesh, part) in mgs2_bevy::scene::model_meshes(model) {
+        match groups.iter_mut().find(|(t, _)| *t == tex) {
+            Some((_, g)) => g.push((mesh, part)),
+            None => groups.push((tex, vec![(mesh, part)])),
+        }
+    }
+    for (tex, group) in groups {
+        let (mut pos, mut nrm, mut uv, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut segs = Vec::new();
+        for (m, part) in &group {
+            let base = pos.len() as u32;
+            if let Some(V::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) {
+                pos.extend_from_slice(p);
+            }
+            if let Some(V::Float32x3(n)) = m.attribute(Mesh::ATTRIBUTE_NORMAL) {
+                nrm.extend_from_slice(n);
+            }
+            if let Some(V::Float32x2(u)) = m.attribute(Mesh::ATTRIBUTE_UV_0) {
+                uv.extend_from_slice(u);
+            }
+            if let Some(Indices::U32(i)) = m.indices() {
+                idx.extend(i.iter().map(|i| base + i));
+            }
+            segs.push((part.object, part.mesh));
+        }
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+        mesh.insert_indices(Indices::U32(idx));
+        let mat = cache.get(tex, data, images, materials, unlit);
+        let child = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), BodyMesh { segs })).id();
+        commands.entity(parent).add_child(child);
+    }
+    parent
+}
+
 /// Places every body and CPU-skins its meshes.
 pub fn skin(
     time: Res<Time>,
     game: Res<Game>,
     mut bodies: Query<(Entity, &mut Body, &mut Transform)>,
     children: Query<&Children>,
-    parts: Query<(&Part, &Mesh3d)>,
+    parts: Query<(&BodyMesh, &Mesh3d, &ViewVisibility)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let dt = time.delta_secs().min(0.05);
+    // Lit by the stage's lt2 like the map (assumed: the same per-vertex
+    // lights at the body's current place).
+    let lt2 = game.data.lights.first().map(|(_, l)| l).filter(|_| std::env::var_os("MGS2_NO_LT2").is_none());
     for (e, mut b, mut t) in &mut bodies {
         t.translation = b.pos * SCALE;
         t.rotation = Quat::from_rotation_y(b.yaw);
@@ -162,16 +227,22 @@ pub fn skin(
         if let (true, Some(m)) = (b.once, motion) {
             b.frame = b.frame.min(m.length.saturating_sub(1) as f32);
         }
+        // Off screen last frame: only the clock runs.
+        if !children.iter_descendants(e).any(|c| parts.get(c).is_ok_and(|p| p.2.get())) {
+            continue;
+        }
         let mats = anim::pose(model, motion, b.frame, false);
-        // Lit by the stage's lt2 like the map (assumed: the same per-vertex
-        // lights at the body's current place).
-        let lt2 = game.data.lights.first().map(|(_, l)| l).filter(|_| std::env::var_os("MGS2_NO_LT2").is_none());
         let reach = Vec3::splat(2000.0);
         let lights = lt2.map(|l| l.gather((b.pos - reach).into(), (b.pos + reach).into())).unwrap_or_default();
         for child in children.iter_descendants(e) {
-            let Ok((part, mesh3d)) = parts.get(child) else { continue };
+            let Ok((part, mesh3d, _)) = parts.get(child) else { continue };
             let Some(mut mesh) = meshes.get_mut(&mesh3d.0) else { continue };
-            let (pos, nrm) = anim::skin(model, part.object, part.mesh, &mats);
+            let (mut pos, mut nrm) = (Vec::new(), Vec::new());
+            for &(o, m) in &part.segs {
+                let (p, n) = anim::skin(model, o, m, &mats);
+                pos.extend(p);
+                nrm.extend(n);
+            }
             if let Some(l) = lt2 {
                 let col: Vec<[f32; 4]> = pos
                     .iter()
@@ -189,7 +260,6 @@ pub fn skin(
         }
     }
 }
-
 /// A character's shadow on the floor under it. The game links a low-poly
 /// shadow model to the body (`sna_shadow` for Snake, joined when the object
 /// counts match, `FUN_00129448`) and draws it as a shadow volume; here it
@@ -215,6 +285,9 @@ pub fn add_shadows(
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     use mgs2_formats::str_code;
+    if std::env::var_os("MGS2_NO_SHADOW").is_some() {
+        return;
+    }
     for (e, b) in &added {
         let data = &game.data;
         let body_hash = data.models[b.model].0;
@@ -251,14 +324,17 @@ pub fn add_shadows(
 pub fn update_shadows(
     game: Res<Game>,
     bodies: Query<&Body>,
-    shadows: Query<(&DropShadow, &ChildOf, &Mesh3d)>,
+    shadows: Query<(&DropShadow, &ChildOf, &Mesh3d, &ViewVisibility)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     use bevy::mesh::Indices;
     /// Above the floor, against z-fighting (mm).
     const LIFT: f32 = 15.0;
-    for (s, parent, m3) in &shadows {
+    for (s, parent, m3, seen) in &shadows {
         let Ok(b) = bodies.get(parent.parent()) else { continue };
+        if !seen.get() {
+            continue;
+        }
         let model = &game.data.models[s.model].1;
         let motion = b.motions.and_then(|m| game.data.motions[m].1.motions.get(b.motion));
         let mats = anim::pose(model, motion, b.frame, false);

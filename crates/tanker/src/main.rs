@@ -823,6 +823,10 @@ fn main() -> Result<()> {
     app.add_systems(Update, (codec::input, codec::screen, codec::voice).chain().run_if(demo::idle));
     app.add_systems(Update, (demo::play, demo::stage, demo::animate, demo::sound, demo::fade).chain().after(player::follow_camera));
     app.add_plugins(music::plugin);
+    // MGS2_FPS=1: log frame rate and time every second.
+    if std::env::var_os("MGS2_FPS").is_some() {
+        app.add_plugins((bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(), bevy::diagnostic::LogDiagnosticsPlugin::default()));
+    }
     app.add_systems(Update, (fog::apply, fog::unfog));
     app.add_systems(Startup, codec_face::setup_portraits).add_systems(Update, (codec_face::load, codec_face::show, codec_face::animate.after(codec_face::load)));
     if let [x, y, z, yaw, pitch] = cli.look[..] {
@@ -966,7 +970,7 @@ fn spawn_level(
         commands.entity(e).insert((at, item));
     }
     let mut spawn = |commands: &mut Commands, model: usize, bundle: Body| {
-        scene::spawn_model(
+        body::spawn_body(
             commands,
             &data.models[model].1,
             data,
@@ -1577,7 +1581,7 @@ fn reinforcements(
             g.join_alert(phase.last_seen);
         }
         info!("trooper arrives at {pos} (route {})", g.route);
-        let e = scene::spawn_model(
+        let e = body::spawn_body(
             &mut commands,
             &data.models[model].1,
             data,
