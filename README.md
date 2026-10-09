@@ -58,7 +58,8 @@ too.
 | C | crouch |
 | Z | prone / crawl (lower to the guards' eyes and bullets; fits under low gaps) |
 | Space | action: open doors (stage exits load the next stage); at a deck edge, hang over the railing (A/D shimmy, Space climb up, Z let go; the grip gauge runs down); some traps react to it too |
-| F (hold, release) | aim (A/D turn) and fire the M9 tranquilizer; aiming at an unaware guard from behind holds him up, and from his front he gives up his dog tags |
+| F (hold, release) | aim (A/D turn) and fire the weapon in hand; aiming at an unaware guard from behind holds him up, and from his front he gives up his dog tags |
+| 1 / 2 | M9 tranquilizer / USP (Snake takes Olga's USP when she goes down; its rounds kill and guards within ~10 m hear it) |
 | V | punch (three in a row knock a guard out) |
 | R | equip / unequip a ration (revives Snake at zero life) |
 | X (hold) | first-person view: A/D turn, W/S look up / down |
@@ -161,7 +162,7 @@ What works:
   holds' time limit (`#9b65f0`, 7 minutes from the new-game variables)
   counts down on screen, ticking, and runs the script's proc at zero.
 
-Assumptions (not taken from the game yet): the M9 starts with 15 darts,
+Assumptions (not taken from the game yet): the M9 starts with 15 darts and the USP with 15 rounds (`MGS2_USP=1` starts with it), the USP is heard within 10 m,
 sleep and knock-out times, reload pause and fire range. In the holds, the
 camera is always available, a photo goes to the first empty album slot (else
 over the worst one) and the Marines' slung rifles are not shown.

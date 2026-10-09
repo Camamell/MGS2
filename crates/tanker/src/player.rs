@@ -180,6 +180,7 @@ pub fn control(
     auto_fire: Option<Res<AutoFire>>,
     auto_hang: Option<Res<AutoHang>>,
     mut inv: ResMut<crate::items::Inventory>,
+    mut gunshot: ResMut<crate::guard::Gunshot>,
     mut game: ResMut<Game>,
     cam: Query<&Transform, With<FollowCam>>,
     mut q: Query<(&mut Player, &mut Body)>,
@@ -260,7 +261,14 @@ pub fn control(
         }
     }
 
-    // M9: hold F to aim along the camera's view, release to fire a dart.
+    // 1 / 2: the M9 or (once Snake has it) the USP.
+    if keys.just_pressed(KeyCode::Digit1) {
+        inv.weapon = 0;
+    }
+    if keys.just_pressed(KeyCode::Digit2) && inv.usp {
+        inv.weapon = 1;
+    }
+    // Hold F to aim along the camera's view, release to fire.
     let t = time.elapsed_secs();
     let aim = (keys.pressed(KeyCode::KeyF) || auto_fire.as_ref().is_some_and(|a| (a.0..a.0 + a.1).contains(&t)))
         && game.entrance <= 0.0;
@@ -277,12 +285,20 @@ pub fn control(
         return;
     }
     if std::mem::take(&mut p.aiming) {
-        let ammo = inv.counts.entry(crate::items::M9_AMMO).or_default();
+        let usp = inv.weapon == 1 && inv.usp;
+        let ammo = inv.counts.entry(if usp { crate::items::USP_AMMO } else { crate::items::M9_AMMO }).or_default();
         if *ammo > 0 {
             *ammo -= 1;
             let f = body.forward();
-            crate::bullet::fire_dart(&mut commands, body.pos + Vec3::Y * MUZZLE + f * 400.0, f);
-            crate::sfx::play(crate::sfx::M9, Some(body.pos));
+            let muzzle = body.pos + Vec3::Y * MUZZLE + f * 400.0;
+            if usp {
+                crate::bullet::fire_round(&mut commands, muzzle, f);
+                crate::sfx::play(crate::sfx::USP, Some(body.pos));
+                gunshot.0 = Some(body.pos);
+            } else {
+                crate::bullet::fire_dart(&mut commands, muzzle, f);
+                crate::sfx::play(crate::sfx::M9, Some(body.pos));
+            }
         } else {
             crate::sfx::play(crate::sfx::EMPTY, Some(body.pos));
         }

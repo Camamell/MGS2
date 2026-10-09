@@ -780,6 +780,7 @@ fn main() -> Result<()> {
     .insert_resource(NewCast(Mutex::new(Some(level.cast))))
     .insert_resource(bullet::Rng(0x2001_1113))
     .init_resource::<items::Inventory>()
+        .init_resource::<guard::Gunshot>()
     .init_resource::<contact::Punches>()
     .init_resource::<codec::CodecState>()
     .insert_resource(opening.unwrap_or_default())
@@ -1003,11 +1004,13 @@ fn spawn_level(
     };
     // (owner, model, shown only while aiming, orientation, joint)
     let mut weapons = Vec::new();
+    let mut usp_model = None;
     match cast.snake {
         Some((model, motions, pos, yaw)) => {
             let e = spawn(&mut commands, model, Body::new(pos, yaw, model, motions));
             commands.entity(e).insert(Player::new(session.difficulty));
             weapons.extend(model_index(data, "m92").map(|m| (e, m, true, body::pistol_grip(), body::RIGHT_HAND)));
+            usp_model = model_index(data, "usp").map(|m| (e, m));
         }
         None => error!("Snake's model (sna_def) not found"),
     }
@@ -1030,7 +1033,13 @@ fn spawn_level(
     for (owner, model, when_aiming, grip, object) in weapons {
         let m = &data.models[model].1;
         let e = scene::spawn_model(&mut commands, m, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
-        commands.entity(e).insert(body::Held { owner, object, when_aiming, grip });
+        // Snake's M9 shows only with the M9 in hand.
+        let weapon = when_aiming.then_some(0);
+        commands.entity(e).insert(body::Held { owner, object, when_aiming, grip, weapon });
+    }
+    if let Some((owner, m)) = usp_model {
+        let e = scene::spawn_model(&mut commands, &data.models[m].1, data, &mut cache, &mut meshes, &mut images, &mut materials, unlit, LevelEntity);
+        commands.entity(e).insert(body::Held { owner, object: body::RIGHT_HAND, when_aiming: true, grip: body::pistol_grip(), weapon: Some(1) });
     }
 }
 
@@ -1295,12 +1304,19 @@ fn boss_defeat(
     session: Res<Session>,
     mut game: ResMut<Game>,
     mut olgas: Query<&mut olga::Olga>,
+    mut inv: ResMut<items::Inventory>,
     level: LevelRoots,
     bullets: Query<Entity, With<bullet::Bullet>>,
 ) {
     for mut o in &mut olgas {
         if o.down() && !o.reported && o.down_for > 3.0 {
             o.reported = true;
+            // Snake takes her USP (rounds assumed).
+            if !inv.usp {
+                inv.usp = true;
+                *inv.counts.entry(items::USP_AMMO).or_default() += items::USP_START;
+                inv.message = Some(("USP".into(), 3.0));
+            }
             if let Some(p) = o.on_down {
                 info!("Olga is down: running {p:#x}");
                 script_event(&mut commands, &session, &mut game, |vm| vm.call_proc(p, &[]), &level, &bullets);
@@ -1614,7 +1630,7 @@ fn reinforcements(
         commands.entity(e).insert((g, Trooper { entry: pos }));
         if let Some(m) = gun {
             let w = scene::spawn_model(&mut commands, &data.models[m].1, data, &mut cache, &mut meshes, &mut images, &mut materials, true, LevelEntity);
-            commands.entity(w).insert(body::Held { owner: e, object: body::RIGHT_HAND, when_aiming: false, grip: body::rifle_grip() });
+            commands.entity(w).insert(body::Held { owner: e, object: body::RIGHT_HAND, when_aiming: false, grip: body::rifle_grip(), weapon: None });
         }
     }
 }
@@ -1804,13 +1820,16 @@ fn hud(
     if inv.ration_equipped {
         carried.insert(0, "[Ration equipped]".into());
     }
+    if inv.usp {
+        carried.insert(0, format!("[{}]", if inv.weapon == 1 { "USP" } else { "M9" }));
+    }
     let mut message = inv.message.as_ref().map_or(String::new(), |(m, _)| format!("  Got: {m}"));
     if let Some(t) = &game.timer {
         message += &format!("   TIME {}", t.text());
     }
     **t = format!(
         "{}  {}  guards {}  camera: {}\n{}{}\nitems: {}{}\npos {:.0} {:.0} {:.0} mm  motion {}{}\n\
-         WASD move  Shift walk  C crouch  Z prone  Space action  F aim/fire M9  V punch  R equip ration  X first person  Q/E or RMB camera  F1 collision+routes  F2 vision cones  F3 script cameras",
+         WASD move  Shift walk  C crouch  Z prone  Space action  F aim/fire  1/2 M9/USP  V punch  R equip ration  X first person  Q/E or RMB camera  F1 collision+routes  F2 vision cones  F3 script cameras",
         game.data.name,
         status,
         guards.iter().count(),

@@ -73,6 +73,8 @@ pub struct Held {
     /// Weapon orientation in the hand's space (found by eye, not from the
     /// game: the models are built barrel along -y).
     pub grip: Quat,
+    /// Shown only with this weapon in Snake's hand (0 M9, 1 USP).
+    pub weapon: Option<u8>,
 }
 
 /// Grip for the AKS (barrel along -y in the model): points it forward (+z)
@@ -94,6 +96,7 @@ pub const RIGHT_HAND: usize = 6;
 pub fn hold(
     mut commands: Commands,
     game: Res<Game>,
+    inv: Res<crate::items::Inventory>,
     bodies: Query<(&Body, Option<&crate::player::Player>), Without<Held>>,
     mut held: Query<(Entity, &Held, &mut Transform, &mut Visibility)>,
     children: Query<&Children>,
@@ -114,7 +117,7 @@ pub fn hold(
         let owner = Transform::from_translation(b.pos * SCALE).with_rotation(Quat::from_rotation_y(b.yaw));
         let (_, rot, pos) = hand.to_scale_rotation_translation();
         *t = owner * Transform::from_translation(pos * SCALE).with_rotation(rot * h.grip);
-        let shown = !h.when_aiming || player.is_some_and(|p| p.aiming);
+        let shown = (!h.when_aiming || player.is_some_and(|p| p.aiming)) && h.weapon.is_none_or(|w| w == if inv.usp { inv.weapon } else { 0 });
         *vis = if shown { Visibility::Inherited } else { Visibility::Hidden };
         // Lit like its owner, again whenever it has moved 10 cm.
         if let Some(l) = lt2.filter(|_| shown)

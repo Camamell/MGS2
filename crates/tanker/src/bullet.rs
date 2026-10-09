@@ -26,13 +26,20 @@ pub struct Bullet {
     pub pos: Vec3,
     pub dir: Vec3,
     pub travelled: f32,
-    /// Snake's tranquilizer dart (hits guards) rather than a guard's round.
+    /// Snake's shot (hits guards) rather than a guard's round.
     pub dart: bool,
+    /// A USP round: kills.
+    pub lethal: bool,
 }
 
 /// Snake's M9 dart: straight along `dir`.
 pub fn fire_dart(commands: &mut Commands, from: Vec3, dir: Vec3) {
-    commands.spawn(Bullet { pos: from, dir: dir.normalize_or(Vec3::Z), travelled: 0.0, dart: true });
+    commands.spawn(Bullet { pos: from, dir: dir.normalize_or(Vec3::Z), travelled: 0.0, dart: true, lethal: false });
+}
+
+/// Snake's USP round: straight along `dir`, lethal.
+pub fn fire_round(commands: &mut Commands, from: Vec3, dir: Vec3) {
+    commands.spawn(Bullet { pos: from, dir: dir.normalize_or(Vec3::Z), travelled: 0.0, dart: true, lethal: true });
 }
 
 /// Small deterministic RNG (the game uses `FUN_0016F600`).
@@ -61,7 +68,7 @@ pub fn fire(commands: &mut Commands, rng: &mut Rng, from: Vec3, at: Vec3) {
     let yaw = d.x.atan2(d.z) + rng.signed() * SPREAD;
     let pitch = d.y.asin() + rng.signed() * SPREAD;
     let dir = Vec3::new(yaw.sin() * pitch.cos(), pitch.sin(), yaw.cos() * pitch.cos());
-    commands.spawn(Bullet { pos: from, dir, travelled: 0.0, dart: false });
+    commands.spawn(Bullet { pos: from, dir, travelled: 0.0, dart: false, lethal: false });
 }
 
 /// Where the segment `a`..`b` passes through a standing body's cylinder
@@ -94,11 +101,20 @@ pub fn fly(
         let end = wall.map_or(next, |t| b.pos.lerp(next, t));
         if b.dart {
             for (gb, mut g) in &mut guards {
+                if g.dead() {
+                    continue;
+                }
                 if let Some(h) = hits_body(b.pos, end, gb.pos, HEIGHT) {
-                    if !g.asleep() {
-                        crate::sfx::play(crate::sfx::GUARD_ASLEEP + g.voice(), Some(gb.pos));
+                    if b.lethal {
+                        // Hit voice (base 0x100), then down for good.
+                        crate::sfx::play(0x100 + g.voice(), Some(gb.pos));
+                        g.kill();
+                    } else {
+                        if !g.asleep() {
+                            crate::sfx::play(crate::sfx::GUARD_ASLEEP + g.voice(), Some(gb.pos));
+                        }
+                        g.tranquilize(h > HEAD_HEIGHT);
                     }
-                    g.tranquilize(h > HEAD_HEIGHT);
                     commands.entity(e).despawn();
                     continue 'bullets;
                 }

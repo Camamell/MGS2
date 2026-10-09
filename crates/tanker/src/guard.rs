@@ -147,6 +147,8 @@ pub enum State {
     /// body hits), then falls (motion 113) and lies (motion 114) until
     /// `timer` reaches `wake`.
     Asleep { delay: f32, timer: f32, wake: f32 },
+    /// Shot dead with the USP: falls (motion 113) and stays down.
+    Dead { timer: f32 },
     /// Saw a comrade down: goes over and wakes him (raising caution).
     Rouse { sleeper: Entity, at: Vec3 },
     /// Held up at gunpoint: hands raised (motion 8). `loose` counts frames
@@ -220,6 +222,13 @@ pub struct Guard {
     pub tagged: bool,
     pub anim: Anim,
 }
+
+/// Where Snake last fired a loud (unsuppressed) shot, for the guards to hear.
+#[derive(Resource, Default)]
+pub struct Gunshot(pub Option<Vec3>);
+
+/// How far the USP is heard (mm; not from the game).
+const GUNSHOT_RANGE: f32 = 10_000.0;
 
 /// Shooting (`FUN_00228710`/`FUN_00228F80`): aim for 21 frames, then a
 /// burst with one shot every 4 frames and a 1-in-3 chance to stop after
@@ -313,8 +322,21 @@ impl Guard {
         (self.route % 4) as u32
     }
 
+    /// Down: asleep, knocked out or dead.
     pub fn asleep(&self) -> bool {
-        matches!(self.state, State::Asleep { .. })
+        matches!(self.state, State::Asleep { .. } | State::Dead { .. })
+    }
+
+    pub fn dead(&self) -> bool {
+        matches!(self.state, State::Dead { .. })
+    }
+
+    /// A lethal round (the USP).
+    pub fn kill(&mut self) {
+        if !self.dead() {
+            self.state = State::Dead { timer: 0.0 };
+            self.path.clear();
+        }
     }
 
     /// A dart hit: head shots work at once.
@@ -474,13 +496,18 @@ pub fn think(
     mut phase: ResMut<Phase>,
     mut rng: ResMut<Rng>,
     mut inv: ResMut<crate::items::Inventory>,
+    mut gunshot: ResMut<Gunshot>,
     snake: Query<(&Body, &Player), Without<Guard>>,
     mut guards: Query<(Entity, &mut Guard, &mut Body)>,
 ) {
     // Comrades lying on the floor (only after they have fallen).
     let sleepers: Vec<(Entity, Vec3)> = guards
         .iter()
-        .filter(|(_, g, _)| matches!(g.state, State::Asleep { delay, timer, .. } if delay <= 0.0 && timer >= sleep::FALL_FRAMES))
+        .filter(|(_, g, _)| match g.state {
+            State::Asleep { delay, timer, .. } => delay <= 0.0 && timer >= sleep::FALL_FRAMES,
+            State::Dead { timer } => timer >= sleep::FALL_FRAMES,
+            _ => false,
+        })
         .map(|(e, _, b)| (e, b.pos))
         .collect();
     let mut woken = Vec::new();
@@ -493,7 +520,24 @@ pub fn think(
     let changed = std::mem::take(&mut phase.changed);
     let mut highest = 0i32;
 
+    let shot = gunshot.0.take();
     for (me, mut g, mut body) in &mut guards {
+        if let State::Dead { timer } = g.state {
+            g.level = 0;
+            g.meter = 0;
+            g.tracking = None;
+            let frames = dt * 60.0;
+            if timer < sleep::FALL_FRAMES {
+                body.play_once(g.anim.fall);
+                if timer + frames >= sleep::FALL_FRAMES {
+                    crate::sfx::play(crate::sfx::BODY_FALL, Some(body.pos));
+                }
+            } else {
+                body.play(g.anim.lie);
+            }
+            g.state = State::Dead { timer: timer + frames };
+            continue;
+        }
         if let State::Asleep { delay, timer, wake } = g.state {
             let frames = dt * 60.0;
             g.level = 0;
@@ -604,6 +648,14 @@ pub fn think(
                 highest = highest.max(i32::from(g.meter));
                 continue;
             }
+        }
+        // A gunshot within earshot draws a look (range assumed).
+        if let Some(at) = shot
+            && g.level < 2
+            && body.pos.distance(at) < GUNSHOT_RANGE
+            && matches!(g.state, State::Patrol | State::Wait(_) | State::Return)
+        {
+            g.state = State::Investigate { target: at, sub: 0, timer: 0 };
         }
         // Footsteps: running within earshot draws a look.
         if snake_running
@@ -785,7 +837,7 @@ fn normal_brain(g: &mut Guard, body: &mut Body, snake: Vec3, dt: f32, game: &Gam
             }
         }
         State::Chase | State::Search { .. } => g.state = State::Return,
-        State::Asleep { .. } | State::Rouse { .. } | State::HeldUp { .. } => {}
+        State::Asleep { .. } | State::Dead { .. } | State::Rouse { .. } | State::HeldUp { .. } => {}
     }
 }
 

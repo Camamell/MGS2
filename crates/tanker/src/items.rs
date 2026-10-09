@@ -17,6 +17,10 @@ pub const ITEM_ACTOR: u32 = 0x9AFF54;
 pub const M9_AMMO: (i32, i32) = (1, 1);
 /// Inventory key of dog tags (item 33).
 pub const DOG_TAGS: (i32, i32) = (0, 33);
+/// Inventory key of the USP's rounds (weapon 2).
+pub const USP_AMMO: (i32, i32) = (1, 2);
+/// Rounds in the USP Snake takes from Olga (an assumption).
+pub const USP_START: i32 = 15;
 /// Darts Snake starts with (an assumption, not read from the game).
 pub const M9_START: i32 = 15;
 /// Pickup reach (mm, horizontal) and height tolerance.
@@ -75,15 +79,27 @@ pub struct Inventory {
     /// Last pickup message and seconds to show it.
     pub message: Option<(String, f32)>,
     pub ration_equipped: bool,
+    /// Has the USP (from Olga).
+    pub usp: bool,
+    /// Weapon in hand: 0 the M9, 1 the USP.
+    pub weapon: u8,
 }
 
 impl Default for Inventory {
     fn default() -> Self {
+        // MGS2_USP=1: start with the USP in hand (testing).
+        let usp = std::env::var_os("MGS2_USP").is_some();
+        let mut counts = BTreeMap::from([(M9_AMMO, M9_START)]);
+        if usp {
+            counts.insert(USP_AMMO, USP_START);
+        }
         Self {
-            counts: BTreeMap::from([(M9_AMMO, M9_START)]),
+            counts,
             taken: HashSet::new(),
             message: None,
             ration_equipped: false,
+            usp,
+            weapon: u8::from(usp),
         }
     }
 }
