@@ -4,6 +4,7 @@
 //! of a sleeper. The game's sprites: atlases 0x2a0983 ("!") and 0x2b0983
 //! ("?"), three 32 x 34 frames each, and 0xd16246 ("Z"), drawn 600 mm over
 //! the head. Their tints and exact timing are not taken from the game.
+//! The guard's voice line for the mark plays as it appears.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -142,6 +143,18 @@ fn update(
             _ => None,
         };
         if want != m.kind {
+            // The voice that goes with the mark (`FUN_0021c0a0(base, guard)`:
+            // base + the guard's voice, together with the mark command
+            // `FUN_0023d800(guard, 0xc, 0x8000 | kind)`): 0x14c with the
+            // counted "!", 0x144 with a "?".
+            let base = match want {
+                Some(Kind::Exclaim) => Some(0x14C),
+                Some(Kind::Question) => Some(0x144),
+                _ => None,
+            };
+            if let Some(base) = base {
+                crate::sfx::play(base + g.voice(), Some(b.pos));
+            }
             m.kind = want;
             m.age = 0.0;
         } else {

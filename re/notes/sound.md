@@ -121,3 +121,4 @@ songs 1-3 are one piece whose `f8` commands raise different track sets.
   knocks him out, `FUN_0024d020`), 0x108 (falls, motions 0x89 / 0x99),
   0x110 (hit), 0x114 (punched, motion 0x79, `FUN_0024b8e8`), 0x118 (motion
   0x74), 0x11c (falling asleep, `FUN_00260320`, then the thud 0x36e).
+- Guards' spoken reactions go through `FUN_0021c0a0(base, guard)` (w04c resident; one line at a time, played by `FUN_0021cd20` as `base + voice`), each next to a head-mark command `FUN_0023d800(guard, 0xc, 0x8000 | kind)`: 0x14c with kind 0 (the counted "!", discovery), 0x144 with kind 5 ("?", not in Evasion), 0x140 with kind 4, 0x158 with kind 6, and 0x150 / 0x154 / 0x160 elsewhere. `0x8f + voice` plays on a frame counter (mode 5). The port plays 0x14c on discovery and 0x144 when an investigation starts.
