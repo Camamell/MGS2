@@ -1,0 +1,11 @@
+1. Go to the project folder:
+
+cd "D:\Claude Code\mgs2-tanker"
+2. Build and run (release mode runs much smoother than debug; the first build takes a few minutes):
+
+cargo run --release -p tanker -- --iso "D:\PCSX2 2.7.383\ISO\Metal Gear Solid 2 - Sons of Liberty (USA).iso"
+That starts at the beginning: the opening cutscene, then the deck (w00a). Esc skips a cutscene and Space jumps to the next subtitle line.
+
+To start at a specific stage, put its name before --iso. For example, w00b is the Olga fight, w04a–w04c are the holds, and w04c has the photo finale:
+
+cargo run --release -p tanker -- w00b --iso "D:\PCSX2 2.7.383\ISO\Metal Gear Solid 2 - Sons of Liberty (USA).iso"
